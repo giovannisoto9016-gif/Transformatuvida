@@ -1,0 +1,104 @@
+/* Layout general */
+body {
+  margin: 0;
+  font-family: 'Georgia', serif;
+  color: #333;
+  background-color: #faf5ee;
+  line-height: 1.6;
+}
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Encabezado hero */
+.hero {
+  background-color: #ffffff;
+  padding: 60px 20px;
+  text-align: center;
+  border-bottom: 2px solid #e0d5c8;
+}
+.hero h1 {
+  font-size: 2.4rem;
+  margin-bottom: 0.5em;
+  color: #4a3e35;
+}
+.hero p {
+  font-size: 1.2rem;
+  margin-bottom: 1.6em;
+  color: #6b5a50;
+}
+
+/* Botón */
+.btn {
+  display: inline-block;
+  background-color: #c9a66b;
+  color: #ffffff;
+  text-decoration: none;
+  padding: 15px 30px;
+  font-size: 1.1rem;
+  border-radius: 5px;
+  transition: background-color 0.3s;
+}
+.btn:hover {
+  background-color: #b8925a;
+}
+
+/* Contenido e listas */
+.content {
+  background-color: #ffffff;
+  padding: 40px 20px;
+  margin-top: 20px;
+  border-radius: 8px;
+  border: 1px solid #e0d5c8;
+}
+.content h2 {
+  font-size: 1.8rem;
+  margin-top: 1.5em;
+  color: #4a3e35;
+}
+.content p {
+  font-size: 1rem;
+  color: #5a4e45;
+}
+.benefits,
+.includes {
+  list-style-type: none;
+  padding-left: 0;
+}
+.benefits li,
+.includes li {
+  margin-bottom: 0.75em;
+}
+.benefits li::before {
+  content: "✔";
+  margin-right: 8px;
+  color: #c9a66b;
+}
+
+/* Precio destacado */
+.price {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #4a3e35;
+  margin-top: 0.5em;
+}
+
+/* CTA inferior */
+.cta-bottom {
+  text-align: center;
+  margin: 40px 0;
+}
+
+/* Pie de página */
+.footer {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #6b5a50;
+  padding: 20px;
+}
+.signature {
+  margin-top: 1em;
+  font-style: italic;
+}
