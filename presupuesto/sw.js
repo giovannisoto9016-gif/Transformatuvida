@@ -1,5 +1,5 @@
 // Cache de la app para que funcione sin internet.
-const CACHE = 'presupuesto-v2';
+const CACHE = 'presupuesto-v3';
 const ASSETS = [
   './',
   './index.html',

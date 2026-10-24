@@ -6,13 +6,13 @@ const STORAGE_KEY = 'presupuesto.v1';
 const FALLBACK_CAT = 'otros';
 const SOON_DAYS = 3; // días antes del vencimiento en que un pago se marca como "pronto"
 
-const PALETTE = ['#7c5cff', '#22d3ee', '#f472b6', '#fbbf24', '#34d399', '#fb7185', '#60a5fa', '#a78bfa', '#f97316', '#2dd4bf', '#94a3b8'];
+const PALETTE = ['#2b7bef', '#22d3ee', '#f472b6', '#fbbf24', '#34d399', '#fb7185', '#60a5fa', '#a78bfa', '#f97316', '#2dd4bf', '#94a3b8'];
 
 const DEFAULT_CATEGORIES = [
-  { id: 'vivienda', name: 'Vivienda', emoji: '🏠', color: '#7c5cff' },
+  { id: 'vivienda', name: 'Vivienda', emoji: '🏠', color: '#2b7bef' },
   { id: 'servicios', name: 'Servicios', emoji: '💡', color: '#fbbf24' },
   { id: 'mercado', name: 'Mercado', emoji: '🛒', color: '#34d399' },
-  { id: 'transporte', name: 'Transporte', emoji: '🚌', color: '#60a5fa' },
+  { id: 'transporte', name: 'Transporte', emoji: '🚌', color: '#818cf8' },
   { id: 'salud', name: 'Salud', emoji: '🩺', color: '#2dd4bf' },
   { id: 'deudas', name: 'Deudas', emoji: '💳', color: '#fb7185' },
   { id: 'educacion', name: 'Educación', emoji: '📚', color: '#a78bfa' },
@@ -25,8 +25,8 @@ const DEFAULT_CATEGORIES = [
 const EMOJIS = ['🏠','💡','💧','📱','🛒','🚌','⛽','🚗','🩺','💊','💳','📚','🍔','☕','🎉','🎬','👕','💇','🐶','👶','🎁','✈️','🏋️','🐷','💼','🧾','🔧','📦'];
 
 const CURRENCIES = [
-  { code: 'MXN', name: 'Peso mexicano', locale: 'es-MX', pesos: true },
   { code: 'COP', name: 'Peso colombiano', locale: 'es-CO', pesos: true },
+  { code: 'MXN', name: 'Peso mexicano', locale: 'es-MX', pesos: true },
   { code: 'ARS', name: 'Peso argentino', locale: 'es-AR', pesos: true },
   { code: 'CLP', name: 'Peso chileno', locale: 'es-CL', pesos: true },
   { code: 'DOP', name: 'Peso dominicano', locale: 'es-DO', pesos: true },
@@ -38,8 +38,8 @@ const CURRENCIES = [
 ];
 
 const THEMES = [
-  { id: 'nexora', name: 'Nexora', bar: '#0b0b1a', preview: 'linear-gradient(135deg,#6d4aff,#4f6bff,#22d3ee)' },
-  { id: 'nexora-claro', name: 'Nexora claro', bar: '#f4f4fb', preview: 'linear-gradient(135deg,#f4f4fb 40%,#6d4aff)' },
+  { id: 'nexora', name: 'Nexora', bar: '#071433', preview: 'linear-gradient(120deg,#071433 25%,#2b7bef,#3fd3c6)' },
+  { id: 'nexora-claro', name: 'Nexora claro', bar: '#f2f6fc', preview: 'linear-gradient(120deg,#ffffff 35%,#2b7bef,#3fd3c6)' },
   { id: 'esmeralda', name: 'Esmeralda', bar: '#08130f', preview: 'linear-gradient(135deg,#047857,#10b981,#a3e635)' },
   { id: 'dorado', name: 'Negro y dorado', bar: '#0a0a0a', preview: 'linear-gradient(135deg,#0a0a0a 30%,#d4a94f,#f5d98b)' },
 ];
@@ -51,7 +51,7 @@ function uid() {
 function defaultState() {
   return {
     version: 2,
-    currency: 'MXN',
+    currency: 'COP',
     theme: 'nexora',
     profile: { name: '', onboarded: false },
     categories: DEFAULT_CATEGORIES.map(c => ({ ...c })),
@@ -80,7 +80,7 @@ function normalizeState(s) {
   s.categories.forEach((c, i) => {
     if (!c.color) c.color = (DEFAULT_CATEGORIES.find(d => d.id === c.id) || {}).color || PALETTE[i % PALETTE.length];
   });
-  s.currency = s.currency || 'MXN';
+  s.currency = s.currency || 'COP';
   s.theme = THEMES.some(t => t.id === s.theme) ? s.theme : 'nexora';
   s.profile = s.profile || { name: '', onboarded: false };
   for (const key of Object.keys(s.months)) {
@@ -812,7 +812,7 @@ function startOnboarding() {
   const ob = $('#onboarding');
   ob.hidden = false;
   let step = 0;
-  let currency = CURRENCIES.find(c => c.code === state.currency) ? state.currency : 'MXN';
+  let currency = CURRENCIES.find(c => c.code === state.currency) ? state.currency : 'COP';
   const show = n => {
     step = n;
     ob.querySelectorAll('.ob-step').forEach(s => s.classList.toggle('active', Number(s.dataset.step) === n));

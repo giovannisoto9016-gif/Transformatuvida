@@ -1,36 +1,36 @@
 /* ===================== Temas ===================== */
 :root,
 [data-theme="nexora"] {
-  --bg: #0b0b1a;
-  --surface: #15152b;
-  --surface-2: #1f1f3d;
-  --text: #f2f1ff;
-  --muted: #9a97c7;
-  --border: #2a2a4d;
-  --primary: #7c5cff;
+  --bg: #071433;
+  --surface: #0d2150;
+  --surface-2: #142c63;
+  --text: #f1f6ff;
+  --muted: #94a9d6;
+  --border: #1d3a7a;
+  --primary: #2b6cf0;
   --primary-text: #ffffff;
-  --accent: #22d3ee;
-  --grad: linear-gradient(135deg, #6d4aff 0%, #4f6bff 50%, #22d3ee 100%);
-  --income: #34d399;
-  --expense: #fb7185;
+  --accent: #3fd3c6;
+  --grad: linear-gradient(120deg, #1d4ed8 0%, #2b7bef 45%, #3fd3c6 100%);
+  --income: #3fd3a0;
+  --expense: #ff7a8a;
   --warn: #fbbf24;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow: 0 10px 30px rgba(0, 8, 30, 0.45);
 }
 [data-theme="nexora-claro"] {
-  --bg: #f4f4fb;
+  --bg: #f2f6fc;
   --surface: #ffffff;
-  --surface-2: #eeeefa;
-  --text: #17162b;
-  --muted: #6c6a8a;
-  --border: #e3e2f2;
-  --primary: #6d4aff;
+  --surface-2: #e9f0fb;
+  --text: #0f2557;
+  --muted: #5b6f99;
+  --border: #dbe5f5;
+  --primary: #1f5fe0;
   --primary-text: #ffffff;
-  --accent: #0eb5d4;
-  --grad: linear-gradient(135deg, #6d4aff 0%, #4f6bff 50%, #22d3ee 100%);
-  --income: #10a875;
+  --accent: #14b3a8;
+  --grad: linear-gradient(120deg, #1d4ed8 0%, #2b7bef 45%, #3fd3c6 100%);
+  --income: #0f9f84;
   --expense: #e5485f;
   --warn: #d68a00;
-  --shadow: 0 10px 30px rgba(60, 50, 140, 0.12);
+  --shadow: 0 10px 30px rgba(15, 37, 87, 0.14);
 }
 [data-theme="esmeralda"] {
   --bg: #08130f;
