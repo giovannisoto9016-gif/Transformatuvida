@@ -2791,6 +2791,21 @@ goto('hub');
 if (!state.profile.onboarded) startOnboarding();
 else showLock();
 
+const APP_VERSION = '14';
+$('#appVersion').textContent = 'Versión ' + APP_VERSION;
+
+// Borra la caché y recarga para traer la última versión publicada.
+$('#forceUpdate').addEventListener('click', async () => {
+  toast('Buscando actualización…');
+  try {
+    const regs = await navigator.serviceWorker?.getRegistrations?.() || [];
+    await Promise.all(regs.map(r => r.unregister()));
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+  } catch { /* sin service worker */ }
+  location.reload();
+});
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
 }
