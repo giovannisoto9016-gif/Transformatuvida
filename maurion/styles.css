@@ -861,3 +861,8 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 .acc-total strong { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
 .acc-balance { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
 .acc-balance strong { font-size: 2rem; font-variant-numeric: tabular-nums; }
+
+.acc2 .acc-types { margin-bottom: 10px; }
+.acc2 .acc-bank-label { display: block; margin-bottom: 6px; }
+.acc2 .acc-bank-label[hidden], .acc2 .acc-banks[hidden] { display: none !important; }
+.acc-hint { margin: 6px 0 0; color: var(--warn); }

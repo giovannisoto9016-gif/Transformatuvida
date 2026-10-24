@@ -342,7 +342,7 @@ function accountById(id) {
 function defaultAccountId() {
   const id = state.settings.defaultAccount;
   if (accountById(id)) return id;
-  return (state.accounts.find(a => a.type !== 'credito') || state.accounts[0])?.id;
+  return (state.accounts.find(a => a.type === 'debito') || state.accounts.find(a => a.type !== 'credito') || state.accounts[0])?.id;
 }
 
 function accountOf(e) {
@@ -361,17 +361,50 @@ function isCash(e) {
 function accountTag(e) {
   const a = accountOf(e);
   if (!a) return '';
-  return `<span class="acc-tag" style="--c:${esc(a.color)}">${ACCOUNT_TYPES[a.type].icon} ${esc(a.name)}</span>`;
+  const short = { efectivo: 'Efectivo', debito: 'Débito', credito: 'Crédito' }[a.type];
+  const label = a.type === 'efectivo' && a.name === 'Efectivo' ? short : `${short} · ${a.name}`;
+  return `<span class="acc-tag" style="--c:${esc(a.color)}">${ACCOUNT_TYPES[a.type].icon} ${esc(label)}</span>`;
 }
 
-function accountPicker(selected, { noCredit = false, label = '¿Con qué pagaste?' } = {}) {
+// Primero el tipo (efectivo, débito o crédito) y luego el banco de ese tipo.
+function accountPicker(selected, { noCredit = false, label = '¿Cómo pagaste?' } = {}) {
   const list = state.accounts.filter(a => !noCredit || a.type !== 'credito');
   const sel = list.some(a => a.id === selected) ? selected : (list.find(a => a.id === defaultAccountId()) || list[0])?.id;
-  return `<div class="field"><span class="field-label">${esc(label)}</span><div class="acc-pick">` +
-    list.map(a => `<label style="--c:${esc(a.color)}"><input type="radio" name="accountId" value="${esc(a.id)}"${a.id === sel ? ' checked' : ''}>` +
-      `<span>${ACCOUNT_TYPES[a.type].icon}</span><span>${esc(a.name)}</span></label>`).join('') +
-    `</div></div>`;
+  const selType = accountById(sel)?.type || 'debito';
+  const types = Object.keys(ACCOUNT_TYPES).filter(t => !noCredit || t !== 'credito');
+  const short = { efectivo: 'Efectivo', debito: 'Débito', credito: 'Crédito' };
+  return `<div class="field acc2"><span class="field-label">${esc(label)}</span>` +
+    `<div class="seg-pick acc-types">` + types.map(t =>
+      `<label><input type="radio" name="accType" value="${t}"${t === selType ? ' checked' : ''}>${ACCOUNT_TYPES[t].icon} ${short[t]}</label>`).join('') + `</div>` +
+    `<span class="field-label acc-bank-label">¿De qué banco?</span>` +
+    `<div class="acc-pick acc-banks">` + list.map(a =>
+      `<label data-type="${a.type}" style="--c:${esc(a.color)}"${a.type === selType ? '' : ' hidden'}><input type="radio" name="accountId" value="${esc(a.id)}"${a.id === sel ? ' checked' : ''}>` +
+      `<span>${ACCOUNT_TYPES[a.type].icon}</span><span>${esc(a.name)}</span></label>`).join('') + `</div>` +
+    `<p class="muted small acc-hint" hidden></p></div>`;
 }
+
+function syncAccountPicker(box) {
+  const type = box.querySelector('[name="accType"]:checked')?.value;
+  const labels = [...box.querySelectorAll('.acc-banks label')];
+  labels.forEach(l => { l.hidden = l.dataset.type !== type; });
+  const visible = labels.filter(l => !l.hidden);
+  const checked = box.querySelector('[name="accountId"]:checked');
+  if (!checked || checked.closest('label').hidden) {
+    if (checked) checked.checked = false;
+    if (visible[0]) visible[0].querySelector('input').checked = true;
+  }
+  // Si solo hay una cuenta de efectivo no hace falta preguntar el banco
+  box.querySelector('.acc-bank-label').hidden = type === 'efectivo' && visible.length <= 1;
+  box.querySelector('.acc-banks').hidden = !visible.length || (type === 'efectivo' && visible.length <= 1);
+  const hint = box.querySelector('.acc-hint');
+  hint.hidden = visible.length > 0;
+  hint.textContent = type === 'credito' ? 'No tienes tarjetas de crédito registradas. Agrégala en Finanzas → Mis cuentas → + Cuenta.'
+    : 'No tienes cuentas de este tipo. Agrégala en Finanzas → Mis cuentas → + Cuenta.';
+}
+
+document.addEventListener('change', e => {
+  if (e.target.name === 'accType') syncAccountPicker(e.target.closest('.acc2'));
+});
 
 // Saldo de una cuenta (en las de crédito es lo que se debe).
 function accountBalance(acc, withInitial = true) {
@@ -950,6 +983,7 @@ function openSheet({ title, body, onSubmit, onDelete, saveLabel = 'Guardar', ext
   }
   sheetSubmit = onSubmit;
   sheetDelete = onDelete;
+  sheet.querySelectorAll('.acc2').forEach(syncAccountPicker);
   sheet.showModal();
   // El campo de monto crece con lo que se escribe para quedar centrado junto al "$".
   const amt = sheet.querySelector('.amount-field input');
@@ -1023,6 +1057,7 @@ function incomeForm(item) {
     onSubmit: d => {
       const amount = parseAmount(d.amount);
       if (!amount) return toast('Escribe un monto válido'), false;
+      if (!d.accountId) return toast('Elige a qué cuenta llega'), false;
       const name = d.name.trim() || 'Ingreso';
       const m = ensureMonth();
       if (item) Object.assign(item, { amount, name, accountId: d.accountId });
@@ -1117,6 +1152,7 @@ function expenseForm(item) {
       const amount = parseAmount(d.amount);
       if (!amount) return toast('Escribe un monto válido'), false;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return toast('Elige una fecha'), false;
+      if (!d.accountId) return toast('Elige con qué banco o tarjeta pagaste'), false;
       const targetKey = d.date.slice(0, 7);
       const data = { amount, categoryId: d.categoryId || FALLBACK_CAT, note: d.note.trim(), date: d.date, accountId: d.accountId || defaultAccountId() };
 
@@ -2396,6 +2432,7 @@ function fuelForm(item) {
       const gallons = parseFloat(String(d.gallons).replace(',', '.'));
       const total = parseAmount(d.total);
       if (!km || !(gallons > 0) || !total) return toast('Completa kilometraje, galones y valor'), false;
+      if (!d.accountId) return toast('Elige con qué banco o tarjeta pagaste'), false;
       const others = fuelOf(d.vehicleId).filter(f => !item || f.id !== item.id);
       const before = others.filter(f => f.date <= d.date).pop();
       if (before && km <= before.km) return toast(`El kilometraje debe ser mayor a ${before.km.toLocaleString('es-CO')}`), false;
