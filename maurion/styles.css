@@ -728,3 +728,64 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 
 .avatar.photo { background: url(icons/icon-192.png) 50% 12% / 210% no-repeat, #0a1d52; border: 2px solid var(--accent); }
 .about-logo { width: 120px; height: 120px; border-radius: 26px; margin-bottom: 4px; }
+
+/* ===================== Registro rápido ===================== */
+.quick-entry {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 5px 5px 5px 4px;
+}
+.quick-entry input { border: 0; background: transparent; padding: 10px 10px; flex: 1; min-width: 0; }
+.quick-entry input:focus { outline: none; }
+.quick-entry:focus-within { border-color: var(--primary); }
+.qe-mic, .qe-send {
+  width: 40px; height: 40px; flex: none;
+  border: 0; border-radius: 13px;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+.qe-mic { background: var(--surface-2); }
+.qe-send { background: var(--grad); color: #fff; font-weight: 800; }
+.no-speech .qe-mic { display: none; }
+.qe-mic.listening { animation: pulse 1s infinite; background: var(--expense); }
+@keyframes pulse { 50% { transform: scale(1.12); } }
+.hero-row .tap { cursor: pointer; }
+.edit-ico { font-size: 0.85rem; opacity: .7; cursor: pointer; }
+
+.toast.has-actions { pointer-events: auto; display: flex; align-items: center; gap: 10px; border-radius: 18px; text-align: left; }
+.toast-btn { border: 0; background: var(--primary); color: #fff; font: inherit; font-weight: 700; font-size: 0.82rem; padding: 6px 10px; border-radius: 10px; cursor: pointer; flex: none; }
+
+/* ===================== Bloqueo ===================== */
+.lock {
+  position: fixed; inset: 0; z-index: 80;
+  background: radial-gradient(circle at 50% 30%, #0f2a6b, var(--bg) 70%);
+  color: #fff;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: calc(20px + env(safe-area-inset-top)) 24px calc(20px + env(safe-area-inset-bottom));
+}
+.lock[hidden] { display: none; }
+.lock-logo { width: 96px; height: 96px; border-radius: 26px; box-shadow: var(--shadow); }
+.lock h2 { font-size: 1.2rem; }
+.pin-dots { display: flex; gap: 14px; height: 18px; }
+.pin-dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); }
+.pin-dots i.on { background: #fff; border-color: #fff; }
+.pin-dots.shake { animation: shake .35s; }
+@keyframes shake { 25% { transform: translateX(-10px); } 75% { transform: translateX(10px); } }
+.keypad { display: grid; grid-template-columns: repeat(3, 76px); gap: 16px; margin-top: 10px; }
+.keypad button {
+  width: 76px; height: 76px; border-radius: 50%;
+  border: 0;
+  background: rgba(255,255,255,.1);
+  color: #fff;
+  font: inherit; font-size: 1.7rem; font-weight: 500;
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.keypad button:active { background: rgba(255,255,255,.25); }
+.keypad .kp-face, .keypad .kp-del { background: transparent; font-size: 1.5rem; }
+.keypad .kp-face small { font-size: 0.6rem; }
+.keypad .kp-face[hidden] { display: flex !important; visibility: hidden; }
+.lock .link { color: rgba(255,255,255,.7); }
+.pin-input { letter-spacing: .5em; text-align: center; }

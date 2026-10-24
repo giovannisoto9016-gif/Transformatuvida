@@ -67,6 +67,11 @@
     <!-- ============ INICIO (HUB) ============ -->
     <section class="view active" id="view-hub">
       <p class="today-line" id="todayLine"></p>
+      <form class="quick-entry" autocomplete="off">
+        <input type="text" enterkeyhint="done" placeholder="✍️ Anota rápido: almuerzo 25 mil" aria-label="Registro rápido">
+        <button type="button" class="qe-mic" data-action="mic" aria-label="Dictar">🎙️</button>
+        <button type="submit" class="qe-send" aria-label="Anotar">➤</button>
+      </form>
 
       <div class="tiles">
         <button class="tile tile-fin" data-goto="finanzas">
@@ -137,11 +142,16 @@
 
       <!-- Resumen -->
       <div class="subview active" id="fin-resumen">
+        <form class="quick-entry" autocomplete="off">
+          <input type="text" enterkeyhint="done" placeholder="✍️ Anota rápido: almuerzo 25 mil" aria-label="Registro rápido">
+          <button type="button" class="qe-mic" data-action="mic" aria-label="Dictar">🎙️</button>
+          <button type="submit" class="qe-send" aria-label="Anotar">➤</button>
+        </form>
         <div class="hero">
           <span class="hero-label">Disponible este mes</span>
           <span class="hero-amount" id="heroAvailable">$0</span>
           <div class="hero-row">
-            <div><span><span class="dot in"></span>Ingresos</span><strong id="heroIncome">$0</strong></div>
+            <div class="tap" data-goto="finanzas" data-sub="presupuesto"><span><span class="dot in"></span>Ingresos ✏️</span><strong id="heroIncome">$0</strong></div>
             <div><span><span class="dot out"></span>Gastado</span><strong id="heroSpent">$0</strong></div>
           </div>
           <div class="hero-bar"><div id="heroBar"></div></div>
@@ -291,6 +301,33 @@
       </div>
 
       <div class="card">
+        <h2>🔒 Seguridad</h2>
+        <p class="muted small">Pide un PIN (o Face ID) al abrir la app. <span id="securityState"></span></p>
+        <div class="btn-col" id="securityBtns"></div>
+        <div class="field mt" id="lockAfterRow">
+          <label for="lockAfter">Volver a pedir el PIN</label>
+          <select id="lockAfter">
+            <option value="0">Cada vez que salgo de la app</option>
+            <option value="1">Después de 1 minuto</option>
+            <option value="5">Después de 5 minutos</option>
+            <option value="15">Después de 15 minutos</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>↪️ Sobrante del mes</h2>
+        <label class="switch-row mt">Pasar lo que sobra al mes siguiente<input type="checkbox" id="rollover"></label>
+        <p class="muted small" style="margin:0">Aparece como “Sobrante de…” en tus ingresos. Lo puedes editar o quitar en cada mes.</p>
+      </div>
+
+      <div class="card">
+        <h2>🔴 Número en el ícono</h2>
+        <p class="muted small">Muestra en el ícono de MAURION cuántos pagos, tareas y recordatorios urgentes tienes (como los mensajes sin leer). Funciona con la app agregada a la pantalla de inicio y pide permiso de notificaciones.</p>
+        <button class="btn soft full" id="badgeBtn" data-action="enable-badge">Activar número en el ícono</button>
+      </div>
+
+      <div class="card">
         <h2>Calendario de Outlook</h2>
         <p class="muted small">Para el botón “Outlook” al pasar tareas y recordatorios a tu calendario.</p>
         <select id="outlookType" class="mt">
@@ -356,6 +393,22 @@
       </div>
     </form>
   </dialog>
+
+  <!-- ============ BLOQUEO ============ -->
+  <div class="lock" id="lock" hidden>
+    <img src="icons/icon-192.png" alt="" class="lock-logo">
+    <h2>Ingresa tu PIN</h2>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="keypad">
+      <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+      <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+      <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+      <button id="lockFace" class="kp-face" aria-label="Usar Face ID">🙂<small>Face ID</small></button>
+      <button data-key="0">0</button>
+      <button data-key="del" class="kp-del" aria-label="Borrar">⌫</button>
+    </div>
+    <button class="link" id="lockForgot">¿Olvidaste tu PIN?</button>
+  </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

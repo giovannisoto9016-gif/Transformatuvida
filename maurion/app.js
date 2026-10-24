@@ -59,7 +59,8 @@ function defaultState() {
     tasks: [],
     reminders: [],
     notes: [],
-    settings: { outlook: 'personal' },
+    settings: { outlook: 'personal', rollover: true, badge: false },
+    security: { pinHash: null, salt: null, credId: null, lockAfter: 1 },
   };
 }
 
@@ -96,7 +97,8 @@ function normalizeState(s) {
   s.tasks = Array.isArray(s.tasks) ? s.tasks : [];
   s.reminders = Array.isArray(s.reminders) ? s.reminders : [];
   s.notes = Array.isArray(s.notes) ? s.notes : [];
-  s.settings = { outlook: 'personal', ...(s.settings || {}) };
+  s.settings = { outlook: 'personal', rollover: true, badge: false, ...(s.settings || {}) };
+  s.security = { pinHash: null, salt: null, credId: null, lockAfter: 1, ...(s.security || {}) };
   s.version = 3;
   return s;
 }
@@ -241,18 +243,56 @@ function vibrate() {
 }
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, actions = []) {
   const el = $('#toast');
   el.textContent = msg;
+  for (const a of actions) {
+    const b = document.createElement('button');
+    b.className = 'toast-btn';
+    b.textContent = a.label;
+    b.addEventListener('click', () => { el.classList.remove('show'); a.onClick(); });
+    el.appendChild(b);
+  }
+  el.classList.toggle('has-actions', actions.length > 0);
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), actions.length ? 5000 : 2200);
 }
 
 /* ===================== Cálculos ===================== */
 
-function totals(m) {
-  const income = sum(m.incomes);
+function hasData(m) {
+  return !!m && (m.incomes.length > 0 || m.expenses.length > 0 || m.planned.length > 0);
+}
+
+// Lo que sobró del mes anterior (ingresos − gastos reales), editable por mes.
+function carryInfo(key) {
+  if (!state.settings.rollover) return null;
+  const m = state.months[key];
+  const ov = m && m.carry;
+  if (ov && ov.off) return null;
+  const prevKey = shiftMonth(key, -1);
+  const first = Object.keys(state.months).filter(k => hasData(state.months[k])).sort()[0];
+  if (!first || prevKey < first) return null;
+  const auto = Math.round((incomeTotal(prevKey) - sum(getMonth(prevKey).expenses)) * 100) / 100;
+  const manual = ov && ov.amount != null;
+  const amount = manual ? ov.amount : auto;
+  if (!amount && !manual) return null;
+  return { amount, auto, manual, prevKey };
+}
+
+function incomeTotal(key) {
+  const c = carryInfo(key);
+  return sum(getMonth(key).incomes) + (c ? c.amount : 0);
+}
+
+function monthName(key) {
+  const [y, mo] = key.split('-').map(Number);
+  return new Date(y, mo - 1, 1).toLocaleDateString('es', { month: 'long' });
+}
+
+function totals(m, key = currentMonth) {
+  const income = incomeTotal(key);
   const planned = sum(m.planned);
   const spent = sum(m.expenses);
   const pending = sum(m.planned.filter(p => !p.paidExpenseId));
@@ -318,10 +358,12 @@ function render() {
   renderReminders();
   renderNotes();
   renderAjustes();
+  renderSecurity();
   const n = urgentCount();
   $('#dueBadge').hidden = n === 0;
   setBadge('#finBadge', n);
   setBadge('#agendaBadge', agendaUrgentCount());
+  updateAppBadge(n + agendaUrgentCount());
 }
 
 function setBadge(sel, n) {
@@ -452,17 +494,28 @@ function plannedItem(p) {
 
 function renderPresupuesto() {
   const m = getMonth();
-  const income = sum(m.incomes), planned = sum(m.planned);
+  const income = incomeTotal(currentMonth), planned = sum(m.planned);
   $('#incomeTotal').textContent = moneyShort(income);
   $('#plannedTotal').textContent = moneyShort(planned);
   const free = $('#freeTotal');
   free.textContent = moneyShort(income - planned);
   free.className = income - planned < 0 ? 'neg' : '';
 
-  $('#incomeList').innerHTML = m.incomes.length ? m.incomes.map(i => `<li>
+  const c = carryInfo(currentMonth);
+  const carryRow = c ? `<li>
+      <span class="ico" style="--c:var(--accent)">↪️</span>
+      <div class="item-main" data-action="edit-carry">
+        <div class="item-title">${c.amount < 0 ? 'Faltante' : 'Sobrante'} ${esc(monthName(c.prevKey))}</div>
+        <div class="item-sub">${c.manual ? 'Editado por ti' : 'Automático'}</div>
+      </div>
+      <span class="amount ${c.amount < 0 ? 'neg' : 'pos'}">${money(c.amount)}</span>
+      <span class="edit-ico">✏️</span>
+    </li>` : '';
+  $('#incomeList').innerHTML = (m.incomes.length || c) ? carryRow + m.incomes.map(i => `<li>
       <span class="ico" style="--c:var(--income)">💰</span>
-      <div class="item-main" data-action="edit-income" data-id="${esc(i.id)}"><div class="item-title">${esc(i.name)}</div></div>
+      <div class="item-main" data-action="edit-income" data-id="${esc(i.id)}"><div class="item-title">${esc(i.name)}</div><div class="item-sub">Toca para editar</div></div>
       <span class="amount pos">${money(i.amount)}</span>
+      <span class="edit-ico" data-action="edit-income" data-id="${esc(i.id)}">✏️</span>
     </li>`).join('') : emptyItem('Agrega tu salario u otros ingresos.');
 
   $('#plannedList').innerHTML = m.planned.length
@@ -520,7 +573,7 @@ function renderAnalisis() {
   const months = Array.from({ length: 6 }, (_, i) => shiftMonth(currentMonth, i - 5));
   const data = months.map(k => {
     const mm = getMonth(k);
-    return { k, income: sum(mm.incomes), spent: sum(mm.expenses) };
+    return { k, income: Math.max(0, incomeTotal(k)), spent: sum(mm.expenses) };
   });
   const max = Math.max(1, ...data.map(d => Math.max(d.income, d.spent)));
   $('#monthBars').innerHTML = data.map(d => {
@@ -1332,7 +1385,7 @@ function renderHub() {
 
   const realMonth = monthKey(new Date());
   const m = getMonth(realMonth);
-  $('#tileFin').textContent = moneyShort(totals(m).available);
+  $('#tileFin').textContent = moneyShort(totals(m, realMonth).available);
 
   const pending = state.tasks.filter(t => !t.done);
   const todayTasks = pending.filter(t => ['late', 'today'].includes(taskBucket(t)));
@@ -1390,6 +1443,369 @@ function quickAdd(kind) {
   if (kind === 'recordatorio') return reminderForm(null);
   return noteForm(null);
 }
+
+/* ===================== Sobrante del mes anterior ===================== */
+
+function carryForm() {
+  const c = carryInfo(currentMonth);
+  if (!c) return;
+  const prev = monthName(c.prevKey);
+  openSheet({
+    title: `Sobrante de ${prev}`,
+    body: amountInput(c.amount) +
+      `<p class="muted small" style="text-align:center;margin:-6px 0 14px">Cálculo automático: <strong>${money(c.auto)}</strong><br>(ingresos − gastos de ${esc(prev)}). Si es negativo, es lo que te faltó.</p>`,
+    extra: [
+      ...(c.manual ? [{ label: '↺ Volver al cálculo automático', onClick: () => { getMonth(currentMonth, true).carry = null; finish('Sobrante automático'); } }] : []),
+      { label: '🚫 No pasar sobrante a este mes', onClick: () => { getMonth(currentMonth, true).carry = { off: true }; finish('Sobrante quitado de este mes'); } },
+    ],
+    onSubmit: d => {
+      const raw = String(d.amount).trim();
+      const neg = raw.startsWith('-');
+      const amount = parseAmount(raw.replace(/^-/, ''));
+      if (amount == null && !/^-?0+$/.test(raw)) return toast('Escribe un monto válido'), false;
+      getMonth(currentMonth, true).carry = { amount: (amount || 0) * (neg ? -1 : 1) };
+      toast('Sobrante actualizado');
+    },
+  });
+  function finish(msg) {
+    closeSheet();
+    saveState();
+    render();
+    toast(msg);
+  }
+}
+
+/* ===================== Registro rápido por frase o voz ===================== */
+
+const WORD_NUMBERS = {
+  un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+  once: 11, doce: 12, quince: 15, veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70,
+  ochenta: 80, noventa: 90, cien: 100, ciento: 100, doscientos: 200, trescientos: 300, cuatrocientos: 400,
+  quinientos: 500, seiscientos: 600, setecientos: 700, ochocientos: 800, novecientos: 900, medio: 0.5,
+};
+
+const CATEGORY_WORDS = {
+  mercado: 'mercado supermercado exito d1 ara olimpica carulla jumbo tienda verduras fruta frutas mecato',
+  comida: 'almuerzo desayuno cena comida restaurante pizza hamburguesa rappi domicilio cafe tinto empanada empanadas pollo helado onces corrientazo perro arepa',
+  transporte: 'uber didi taxi bus buseta transmilenio mio metro gasolina tanqueo tanqueada parqueadero peaje indriver cabify pasaje pasajes',
+  servicios: 'luz agua gas internet celular plan claro movistar tigo wom netflix spotify youtube disney energia epm emcali recibo',
+  vivienda: 'arriendo renta administracion hipoteca',
+  salud: 'medico drogueria farmacia medicina medicamentos eps cita odontologo gym gimnasio examenes',
+  deudas: 'tarjeta credito cuota prestamo deuda banco abono',
+  educacion: 'curso libro libros universidad colegio matricula udemy platzi semestre',
+  ocio: 'cine fiesta cerveza cervezas trago tragos bar concierto juego salida rumba viaje regalo paseo',
+  ahorro: 'ahorro cdt inversion ahorre',
+};
+
+const INCOME_RE = /\b(ingreso|ingresos|me pagaron|salario|sueldo|nomina|quincena|prima|recibi|me consignaron|me transfirieron|me giraron|vendi|honorarios|me entro|me llego)\b/;
+
+function normalizeText(s) {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function parseQuick(text) {
+  let t = ' ' + normalizeText(text) + ' ';
+  // Números escritos en palabras: "veinte mil" → "20 mil"
+  t = t.replace(/\b([a-z]+)\b/g, w => (w in WORD_NUMBERS ? String(WORD_NUMBERS[w]) : w));
+  t = t.replace(/(\d+) (\d+) (mil|millon|millones)/g, (_, a, b, u) => `${Number(a) + Number(b)} ${u}`);
+
+  const re = /\$?\s*(\d+(?:[.,]\d+)*)\s*(k|mil|millones|millon|m|palos?|lucas?|barras?)?(?=[\s.,;!?]|$)/;
+  const match = t.match(re);
+  if (!match) return null;
+  const [whole, num, unit] = match;
+  let amount;
+  if (unit) {
+    const n = parseFloat(num.replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.'));
+    const mult = /^(k|mil|lucas?|barras?)$/.test(unit) ? 1e3 : 1e6;
+    amount = n * mult;
+  } else {
+    amount = parseAmount(num);
+  }
+  if (!amount) return null;
+
+  let rest = t.replace(whole, ' ');
+  let date = todayIso();
+  if (/\banteayer\b/.test(rest)) {
+    const d = new Date(); d.setDate(d.getDate() - 2); date = isoDate(d);
+  } else if (/\bayer\b/.test(rest)) {
+    const d = new Date(); d.setDate(d.getDate() - 1); date = isoDate(d);
+  }
+  const isIncome = INCOME_RE.test(rest);
+
+  rest = rest.replace(/\b(anteayer|ayer|hoy|pesos|en|de|del|por|un|una|el|la|los|las|gaste|pague|compre|me gaste|gasto|fue|para)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+
+  // Categoría: palabras clave + nombres de tus propias categorías
+  let categoryId = FALLBACK_CAT;
+  const words = rest.split(' ');
+  outer:
+  for (const c of state.categories) {
+    const keys = (CATEGORY_WORDS[c.id] || '').split(' ').concat(normalizeText(c.name).split(' ')).filter(Boolean);
+    for (const w of words) if (keys.includes(w)) { categoryId = c.id; break outer; }
+  }
+
+  // Descripción con el texto original (sin el valor), para conservar mayúsculas y tildes
+  let note = text.replace(/\$?\s*\d+(?:[.,]\d+)*\s*(k|mil|millones|millón|millon|m|palos?|lucas?|barras?)?\b/i, ' ')
+    .replace(new RegExp(`\\b(?:(?:${Object.keys(WORD_NUMBERS).join('|')})\\s+)+(?:mil|millones|millón|millon|palos?|lucas?)\\b`, 'gi'), ' ')
+    .replace(/\b(anteayer|ayer|hoy|pesos)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  note = note ? capitalize(note) : '';
+  return { amount: Math.round(amount * 100) / 100, categoryId, note, date, isIncome };
+}
+
+function quickEntry(text) {
+  const r = parseQuick(text);
+  if (!r) {
+    toast('No encontré el valor. Ejemplo: “almuerzo 25 mil”');
+    return false;
+  }
+  const key = r.date.slice(0, 7);
+  if (r.isIncome) {
+    const item = { id: uid(), name: r.note || 'Ingreso', amount: r.amount };
+    getMonth(key, true).incomes.push(item);
+    saveState();
+    render();
+    toast(`💰 Ingreso: ${money(r.amount)}${r.note ? ' · ' + r.note : ''}`, [
+      { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.incomes = m.incomes.filter(i => i !== item); saveState(); render(); } },
+    ]);
+  } else {
+    const item = { id: uid(), amount: r.amount, categoryId: r.categoryId, note: r.note, date: r.date, plannedId: null, createdAt: Date.now() };
+    getMonth(key, true).expenses.push(item);
+    saveState();
+    render();
+    const c = catById(r.categoryId);
+    toast(`${c.emoji} ${c.name}: ${money(r.amount)}${r.note ? ' · ' + r.note : ''}`, [
+      { label: 'Editar', onClick: () => { currentMonth = key; render(); expenseForm(item); } },
+      { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.expenses = m.expenses.filter(e => e !== item); saveState(); render(); } },
+    ]);
+  }
+  vibrate();
+  return true;
+}
+
+document.addEventListener('submit', e => {
+  const form = e.target.closest('.quick-entry');
+  if (!form) return;
+  e.preventDefault();
+  const input = form.querySelector('input');
+  if (!input.value.trim()) return input.focus();
+  if (quickEntry(input.value)) {
+    input.value = '';
+    input.blur();
+  }
+});
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SpeechRec) document.documentElement.classList.add('no-speech');
+
+function startDictation(btn) {
+  if (!SpeechRec) return toast('Usa el 🎙️ del teclado para dictar');
+  const input = btn.closest('.quick-entry').querySelector('input');
+  const rec = new SpeechRec();
+  rec.lang = 'es-CO';
+  rec.interimResults = false;
+  btn.classList.add('listening');
+  rec.onresult = ev => {
+    input.value = ev.results[0][0].transcript;
+    btn.closest('.quick-entry').requestSubmit();
+  };
+  rec.onerror = () => toast('No te escuché bien, intenta de nuevo');
+  rec.onend = () => btn.classList.remove('listening');
+  rec.start();
+}
+
+/* ===================== Bloqueo con PIN y Face ID ===================== */
+
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
+
+async function hashPin(pin, salt) {
+  const data = new TextEncoder().encode(salt + ':' + pin);
+  return b64(await crypto.subtle.digest('SHA-256', data));
+}
+
+let pinBuffer = '';
+let hiddenAt = null;
+
+function lockEnabled() {
+  return !!state.security.pinHash;
+}
+
+function showLock() {
+  if (!lockEnabled()) return;
+  pinBuffer = '';
+  renderPinDots();
+  $('#lock').hidden = false;
+  $('#lockFace').hidden = !state.security.credId;
+  if (sheet.open) closeSheet();
+}
+
+function renderPinDots(error) {
+  const dots = $('#pinDots');
+  dots.innerHTML = Array.from({ length: state.security.pinLen || 4 }, (_, i) => `<i class="${i < pinBuffer.length ? 'on' : ''}"></i>`).join('');
+  dots.classList.toggle('shake', !!error);
+}
+
+function unlock() {
+  $('#lock').hidden = true;
+  pinBuffer = '';
+  render();
+}
+
+async function tryPin() {
+  if ((await hashPin(pinBuffer, state.security.salt)) === state.security.pinHash) return unlock();
+  pinBuffer = '';
+  renderPinDots(true);
+  vibrate();
+}
+
+$('#lock').addEventListener('click', async e => {
+  const k = e.target.closest('[data-key]');
+  if (k) {
+    const key = k.dataset.key;
+    if (key === 'del') pinBuffer = pinBuffer.slice(0, -1);
+    else if (pinBuffer.length < (state.security.pinLen || 4)) pinBuffer += key;
+    renderPinDots();
+    if (pinBuffer.length === (state.security.pinLen || 4)) await tryPin();
+    return;
+  }
+  if (e.target.closest('#lockFace')) return faceUnlock();
+  if (e.target.closest('#lockForgot')) {
+    if (confirm('Si olvidaste tu PIN, la única forma de entrar es borrar los datos de la app (luego puedes restaurar una copia de seguridad). ¿Borrar todo?')) {
+      state = defaultState();
+      saveState();
+      location.reload();
+    }
+  }
+});
+
+async function faceUnlock() {
+  try {
+    await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ type: 'public-key', id: unb64(state.security.credId), transports: ['internal'] }],
+        userVerification: 'required',
+        timeout: 60000,
+      },
+    });
+    unlock();
+  } catch {
+    toast('No se pudo verificar. Usa tu PIN.');
+  }
+}
+
+function pinSetupForm() {
+  openSheet({
+    title: lockEnabled() ? 'Cambiar PIN' : 'Crear PIN',
+    body: `<p class="muted small" style="text-align:center;margin:0 0 12px">Elige un PIN de 4 a 6 números. Te lo pediremos al abrir MAURION.</p>` +
+      field('PIN nuevo', `<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required autofocus class="big-input pin-input">`) +
+      field('Repite el PIN', `<input name="pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required class="big-input pin-input">`),
+    saveLabel: 'Guardar PIN',
+    onSubmit: d => {
+      if (!/^\d{4,6}$/.test(d.pin)) return toast('El PIN debe tener de 4 a 6 números'), false;
+      if (d.pin !== d.pin2) return toast('Los PIN no coinciden'), false;
+      const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+      hashPin(d.pin, salt).then(h => {
+        state.security.salt = salt;
+        state.security.pinHash = h;
+        state.security.pinLen = d.pin.length;
+        saveState();
+        render();
+        toast('🔒 Bloqueo activado');
+      });
+    },
+  });
+}
+
+function removeLock() {
+  if (!confirm('¿Quitar el bloqueo de MAURION?')) return;
+  state.security = { ...state.security, pinHash: null, salt: null, credId: null };
+  saveState();
+  render();
+  toast('Bloqueo desactivado');
+}
+
+async function enableFaceId() {
+  if (!lockEnabled()) return toast('Primero crea un PIN');
+  try {
+    const ok = window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!ok) return toast('Este celular no permite Face ID para la app');
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: 'MAURION' },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'maurion', displayName: state.profile.name || 'MAURION' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        attestation: 'none',
+        timeout: 60000,
+      },
+    });
+    state.security.credId = b64(cred.rawId);
+    saveState();
+    render();
+    toast('Face ID activado 😎');
+  } catch {
+    toast('No se activó Face ID');
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') hiddenAt = Date.now();
+  else if (lockEnabled() && hiddenAt && Date.now() - hiddenAt >= state.security.lockAfter * 60000) showLock();
+});
+
+/* ===================== Número en el ícono ===================== */
+
+function updateAppBadge(n) {
+  if (!('setAppBadge' in navigator) || !state.settings.badge) return;
+  (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+}
+
+async function enableBadge() {
+  if (state.settings.badge) {
+    state.settings.badge = false;
+    if ('clearAppBadge' in navigator) navigator.clearAppBadge().catch(() => {});
+    saveState();
+    render();
+    return toast('Número del ícono desactivado');
+  }
+  if (!('setAppBadge' in navigator)) {
+    return toast('Primero agrega MAURION a tu pantalla de inicio y ábrela desde ahí');
+  }
+  if ('Notification' in window && Notification.permission !== 'granted') {
+    const p = await Notification.requestPermission();
+    if (p !== 'granted') return toast('Debes permitir notificaciones para ver el número');
+  }
+  state.settings.badge = true;
+  saveState();
+  render();
+  toast('Listo: verás tus pendientes en el ícono');
+}
+
+function renderSecurity() {
+  const on = lockEnabled();
+  $('#securityState').textContent = on ? (state.security.credId ? '🔒 Activo con PIN y Face ID' : '🔒 Activo con PIN') : 'Desactivado';
+  $('#securityBtns').innerHTML = on
+    ? `<button class="btn soft" data-action="set-pin">Cambiar PIN</button>` +
+      (state.security.credId ? '' : `<button class="btn soft" data-action="enable-faceid">Activar Face ID</button>`) +
+      `<button class="btn danger-soft" data-action="remove-lock">Quitar bloqueo</button>`
+    : `<button class="btn primary" data-action="set-pin">Activar bloqueo con PIN</button>`;
+  $('#lockAfter').value = String(state.security.lockAfter);
+  $('#lockAfterRow').hidden = !on;
+  $('#badgeBtn').textContent = state.settings.badge ? 'Desactivar número en el ícono' : 'Activar número en el ícono';
+  $('#rollover').checked = !!state.settings.rollover;
+}
+
+$('#lockAfter').addEventListener('change', e => {
+  state.security.lockAfter = Number(e.target.value);
+  saveState();
+});
+$('#rollover').addEventListener('change', e => {
+  state.settings.rollover = e.target.checked;
+  saveState();
+  render();
+});
 
 /* ===================== Bienvenida ===================== */
 
@@ -1495,6 +1911,12 @@ document.addEventListener('click', e => {
       return togglePaid(id);
     case 'toggle-reminder': return toggleReminder(id);
     case 'quick': return quickAdd(el.dataset.kind);
+    case 'edit-carry': return carryForm();
+    case 'set-pin': return pinSetupForm();
+    case 'remove-lock': return removeLock();
+    case 'enable-faceid': return enableFaceId();
+    case 'enable-badge': return enableBadge();
+    case 'mic': return startDictation(el);
     case 'add-category': return categoryForm(null);
     case 'edit-category': return categoryForm(state.categories.find(x => x.id === id));
   }
@@ -1611,6 +2033,7 @@ document.addEventListener('visibilitychange', () => {
 render();
 goto('hub');
 if (!state.profile.onboarded) startOnboarding();
+else showLock();
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW', err));
