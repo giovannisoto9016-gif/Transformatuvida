@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Mi Presupuesto</title>
+  <meta name="description" content="Presupuesto personal: ingresos, gastos proyectados y gastos adicionales por categoría.">
+  <meta name="theme-color" content="#2f6f5e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Presupuesto">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="prevMonth" aria-label="Mes anterior">‹</button>
+    <h1 id="monthLabel">—</h1>
+    <button class="icon-btn" id="nextMonth" aria-label="Mes siguiente">›</button>
+  </header>
+
+  <main>
+    <!-- RESUMEN -->
+    <section class="view active" id="view-resumen">
+      <div class="cards">
+        <div class="card stat">
+          <span class="label">Ingresos</span>
+          <span class="value income" id="sumIncome">0</span>
+        </div>
+        <div class="card stat">
+          <span class="label">Gastado</span>
+          <span class="value expense" id="sumSpent">0</span>
+        </div>
+        <div class="card stat">
+          <span class="label">Proyectado</span>
+          <span class="value" id="sumPlanned">0</span>
+        </div>
+        <div class="card stat">
+          <span class="label">Disponible</span>
+          <span class="value" id="sumAvailable">0</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row-between">
+          <h2>Uso del ingreso</h2>
+          <span class="muted" id="usePct">0%</span>
+        </div>
+        <div class="bar big"><div class="bar-fill" id="useBar"></div></div>
+        <p class="muted small" id="projectionNote"></p>
+      </div>
+
+      <div class="card">
+        <h2>Por categoría</h2>
+        <p class="muted small">Gastado vs. proyectado en cada categoría.</p>
+        <ul class="cat-list" id="catSummary"></ul>
+      </div>
+
+      <div class="card">
+        <div class="row-between">
+          <h2>Pendientes por pagar</h2>
+          <span class="muted" id="pendingTotal"></span>
+        </div>
+        <ul class="list" id="pendingList"></ul>
+      </div>
+    </section>
+
+    <!-- PRESUPUESTO -->
+    <section class="view" id="view-presupuesto">
+      <div class="card">
+        <div class="row-between">
+          <h2>Ingresos del mes</h2>
+          <button class="btn small" data-action="add-income">+ Ingreso</button>
+        </div>
+        <ul class="list" id="incomeList"></ul>
+        <div class="row-between total-row"><span>Total</span><strong id="incomeTotal">0</strong></div>
+      </div>
+
+      <div class="card">
+        <div class="row-between">
+          <h2>Gastos proyectados</h2>
+          <button class="btn small" data-action="add-planned">+ Gasto fijo</button>
+        </div>
+        <p class="muted small">Arriendo, servicios, deudas, mercado… Márcalos como pagados cuando los pagues.</p>
+        <ul class="list" id="plannedList"></ul>
+        <div class="row-between total-row"><span>Total</span><strong id="plannedTotal">0</strong></div>
+      </div>
+
+      <button class="btn ghost full" id="copyPrev">Copiar presupuesto del mes anterior</button>
+    </section>
+
+    <!-- GASTOS -->
+    <section class="view" id="view-gastos">
+      <div class="card">
+        <div class="row-between">
+          <h2>Gastos registrados</h2>
+          <select id="filterCat" aria-label="Filtrar por categoría"></select>
+        </div>
+        <ul class="list" id="expenseList"></ul>
+        <div class="row-between total-row"><span>Total</span><strong id="expenseTotal">0</strong></div>
+      </div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section class="view" id="view-ajustes">
+      <div class="card">
+        <div class="row-between">
+          <h2>Categorías</h2>
+          <button class="btn small" data-action="add-category">+ Categoría</button>
+        </div>
+        <ul class="list" id="categoryList"></ul>
+      </div>
+
+      <div class="card">
+        <h2>Moneda</h2>
+        <select id="currency">
+          <option value="USD">Dólar (USD)</option>
+          <option value="COP">Peso colombiano (COP)</option>
+          <option value="MXN">Peso mexicano (MXN)</option>
+          <option value="EUR">Euro (EUR)</option>
+          <option value="ARS">Peso argentino (ARS)</option>
+          <option value="CLP">Peso chileno (CLP)</option>
+          <option value="PEN">Sol peruano (PEN)</option>
+          <option value="GTQ">Quetzal (GTQ)</option>
+          <option value="DOP">Peso dominicano (DOP)</option>
+        </select>
+      </div>
+
+      <div class="card">
+        <h2>Tus datos</h2>
+        <p class="muted small">Todo se guarda solo en este celular. Haz copias de seguridad de vez en cuando.</p>
+        <div class="btn-col">
+          <button class="btn ghost" id="exportJson">Descargar copia de seguridad</button>
+          <label class="btn ghost file-btn">Restaurar copia
+            <input type="file" id="importJson" accept="application/json,.json" hidden>
+          </label>
+          <button class="btn ghost" id="exportCsv">Exportar gastos del mes (CSV)</button>
+          <button class="btn danger" id="resetAll">Borrar todos los datos</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <button class="fab" data-action="add-expense" aria-label="Registrar gasto">+</button>
+
+  <nav class="tabbar">
+    <button class="tab active" data-view="resumen"><span>📊</span>Resumen</button>
+    <button class="tab" data-view="presupuesto"><span>🗓️</span>Presupuesto</button>
+    <button class="tab" data-view="gastos"><span>🧾</span>Gastos</button>
+    <button class="tab" data-view="ajustes"><span>⚙️</span>Ajustes</button>
+  </nav>
+
+  <dialog id="modal">
+    <form method="dialog" id="modalForm">
+      <h2 id="modalTitle"></h2>
+      <div id="modalBody"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn danger ghost" id="modalDelete" hidden>Eliminar</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="modalCancel">Cancelar</button>
+        <button type="submit" class="btn" id="modalSave">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
