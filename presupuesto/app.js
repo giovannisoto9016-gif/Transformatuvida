@@ -56,6 +56,10 @@ function defaultState() {
     profile: { name: '', onboarded: false },
     categories: DEFAULT_CATEGORIES.map(c => ({ ...c })),
     months: {},
+    tasks: [],
+    reminders: [],
+    notes: [],
+    settings: { outlook: 'personal' },
   };
 }
 
@@ -89,7 +93,11 @@ function normalizeState(s) {
     m.planned = m.planned || [];
     m.expenses = m.expenses || [];
   }
-  s.version = 2;
+  s.tasks = Array.isArray(s.tasks) ? s.tasks : [];
+  s.reminders = Array.isArray(s.reminders) ? s.reminders : [];
+  s.notes = Array.isArray(s.notes) ? s.notes : [];
+  s.settings = { outlook: 'personal', ...(s.settings || {}) };
+  s.version = 3;
   return s;
 }
 
@@ -103,7 +111,11 @@ function saveState() {
 
 let state = loadState();
 let currentMonth = monthKey(new Date());
-let currentView = 'inicio';
+let currentView = 'hub';
+let finSub = 'resumen';
+let agendaSub = 'tareas';
+let taskFilter = 'pendientes';
+let noteQuery = '';
 let expenseFilter = 'all';
 
 function monthKey(d) {
@@ -297,15 +309,25 @@ function render() {
   const [y, mo] = currentMonth.split('-').map(Number);
   $('#monthLabel').textContent = capitalize(new Date(y, mo - 1, 1).toLocaleDateString('es', { month: 'long', year: 'numeric' }));
   renderHeader();
+  renderHub();
   renderInicio();
   renderPresupuesto();
   renderGastos();
   renderAnalisis();
+  renderTasks();
+  renderReminders();
+  renderNotes();
   renderAjustes();
   const n = urgentCount();
-  const badge = $('#dueBadge');
-  badge.hidden = n === 0;
-  badge.textContent = n;
+  $('#dueBadge').hidden = n === 0;
+  setBadge('#finBadge', n);
+  setBadge('#agendaBadge', agendaUrgentCount());
+}
+
+function setBadge(sel, n) {
+  const b = $(sel);
+  b.hidden = n === 0;
+  b.textContent = n;
 }
 
 function applyTheme() {
@@ -536,6 +558,7 @@ function renderAnalisis() {
 }
 
 function renderAjustes() {
+  $('#outlookType').value = state.settings.outlook;
   const nameInput = $('#profileName');
   if (document.activeElement !== nameInput) nameInput.value = state.profile.name || '';
 
@@ -555,13 +578,21 @@ function renderAjustes() {
 
 /* ===================== Navegación ===================== */
 
-function goto(view) {
+function goto(view, sub) {
   currentView = view;
+  if (view === 'finanzas' && sub) finSub = sub;
+  if (view === 'agenda' && sub) agendaSub = sub;
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + view));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.goto === view));
   document.body.classList.toggle('in-settings', view === 'ajustes');
-  $('#monthSwitch').hidden = view === 'ajustes';
+  showSub('#finSeg', 'fin-', finSub);
+  showSub('#agendaSeg', 'ag-', agendaSub);
   window.scrollTo({ top: 0 });
+}
+
+function showSub(segSel, prefix, sub) {
+  $(segSel).querySelectorAll('[data-sub]').forEach(b => b.classList.toggle('on', b.dataset.sub === sub));
+  document.querySelectorAll(`[id^="${prefix}"]`).forEach(v => v.classList.toggle('active', v.id === prefix + sub));
 }
 
 /* ===================== Hoja de formulario ===================== */
@@ -569,12 +600,25 @@ function goto(view) {
 const sheet = $('#sheet');
 let sheetSubmit = null;
 let sheetDelete = null;
+let afterSheet = null; // acción a ejecutar después de guardar y cerrar (p. ej. abrir el calendario)
 
-function openSheet({ title, body, onSubmit, onDelete, saveLabel = 'Guardar' }) {
+function openSheet({ title, body, onSubmit, onDelete, saveLabel = 'Guardar', extra = [] }) {
+  if (sheet.open) sheet.close();
   $('#sheetTitle').textContent = title;
   $('#sheetBody').innerHTML = body;
   $('#sheetSave').textContent = saveLabel;
+  $('#sheetSave').hidden = !onSubmit;
   $('#sheetDelete').hidden = !onDelete;
+  const extraBox = $('#sheetExtra');
+  extraBox.innerHTML = '';
+  for (const x of extra) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn soft' + (x.html ? ' cal-btn' : '');
+    if (x.html) b.innerHTML = x.html; else b.textContent = x.label;
+    b.addEventListener('click', x.onClick);
+    extraBox.appendChild(b);
+  }
   sheetSubmit = onSubmit;
   sheetDelete = onDelete;
   sheet.showModal();
@@ -603,6 +647,9 @@ $('#sheetForm').addEventListener('submit', e => {
     closeSheet();
     saveState();
     render();
+    const next = afterSheet;
+    afterSheet = null;
+    if (next) setTimeout(next, 150);
   }
 });
 $('#sheetDelete').addEventListener('click', () => {
@@ -671,6 +718,7 @@ function plannedForm(item) {
       catPicker(item?.categoryId || 'vivienda') +
       field('Día de pago (para recordarte)', `<input name="dueDay" type="number" min="1" max="31" inputmode="numeric" placeholder="Ej. 5" value="${item?.dueDay || ''}">`),
     saveLabel: item ? 'Guardar' : 'Agregar',
+    extra: item?.dueDay ? [{ label: '📅 Agregar al calendario (cada mes)', onClick: () => calendarChooser(plannedEvent(item)) }] : [],
     onSubmit: d => {
       const amount = parseAmount(d.amount);
       if (!amount) return toast('Escribe un monto válido'), false;
@@ -806,6 +854,546 @@ function categoryForm(item) {
   }));
 }
 
+/* ===================== Calendario (celular, Outlook, Google) ===================== */
+
+const pad2 = n => String(n).padStart(2, '0');
+const RRULES = { daily: 'FREQ=DAILY', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY', yearly: 'FREQ=YEARLY' };
+const REPEAT_LABELS = { none: 'No se repite', daily: 'Todos los días', weekly: 'Cada semana', monthly: 'Cada mes', yearly: 'Cada año' };
+const ALARMS = [[0, 'A la hora'], [5, '5 min antes'], [15, '15 min antes'], [30, '30 min antes'], [60, '1 hora antes'], [1440, '1 día antes']];
+
+function stampLocal(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+}
+function stampDate(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+}
+function isoWithOffset(d) {
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  return `${isoDate(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+}
+
+function eventEnd(ev) {
+  return new Date(ev.start.getTime() + (ev.allDay ? 86400000 : (ev.minutes || 30) * 60000));
+}
+
+function icsEscape(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+}
+
+// ev: { title, notes, start: Date, allDay, minutes, alarm (minutos antes o null), repeat }
+function buildIcs(ev) {
+  const end = eventEnd(ev);
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MAURIX//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VEVENT',
+    `UID:${uid()}@maurix`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')}`,
+    ev.allDay ? `DTSTART;VALUE=DATE:${stampDate(ev.start)}` : `DTSTART:${stampLocal(ev.start)}`,
+    ev.allDay ? `DTEND;VALUE=DATE:${stampDate(end)}` : `DTEND:${stampLocal(end)}`,
+    `SUMMARY:${icsEscape(ev.title)}`,
+  ];
+  if (ev.notes) lines.push(`DESCRIPTION:${icsEscape(ev.notes)}`);
+  if (RRULES[ev.repeat]) lines.push(`RRULE:${RRULES[ev.repeat]}`);
+  if (ev.alarm != null) {
+    // En eventos de todo el día la alerta suena a las 9:00 de ese día.
+    const trigger = ev.allDay ? 'PT9H' : `-PT${ev.alarm}M`;
+    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEscape(ev.title)}`, `TRIGGER:${trigger}`, 'END:VALARM');
+  }
+  lines.push('END:VEVENT', 'END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+function outlookUrl(ev) {
+  const base = state.settings.outlook === 'trabajo' ? 'https://outlook.office.com' : 'https://outlook.live.com';
+  const end = eventEnd(ev);
+  let body = ev.notes || '';
+  if (RRULES[ev.repeat]) body += (body ? '\n' : '') + `Repetir: ${REPEAT_LABELS[ev.repeat]} (configúralo en “Repetir” antes de guardar).`;
+  const p = new URLSearchParams({
+    path: '/calendar/action/compose',
+    rru: 'addevent',
+    subject: ev.title,
+    body,
+    startdt: ev.allDay ? isoDate(ev.start) : isoWithOffset(ev.start),
+    enddt: ev.allDay ? isoDate(end) : isoWithOffset(end),
+    allday: String(!!ev.allDay),
+  });
+  return `${base}/calendar/0/deeplink/compose?${p}`;
+}
+
+function googleUrl(ev) {
+  const end = eventEnd(ev);
+  const p = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: ev.title,
+    dates: ev.allDay ? `${stampDate(ev.start)}/${stampDate(end)}` : `${stampLocal(ev.start)}/${stampLocal(end)}`,
+    details: ev.notes || '',
+    ctz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+  if (RRULES[ev.repeat]) p.set('recur', 'RRULE:' + RRULES[ev.repeat]);
+  return 'https://calendar.google.com/calendar/render?' + p;
+}
+
+function describeWhen(start, allDay, repeat) {
+  let s = capitalize(start.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }));
+  if (!allDay) s += ' · ' + start.toLocaleTimeString('es', { hour: 'numeric', minute: '2-digit' });
+  if (RRULES[repeat]) s += ' · 🔁 ' + REPEAT_LABELS[repeat].toLowerCase();
+  return s;
+}
+
+function calendarChooser(ev, onAdded) {
+  const done = msg => {
+    if (onAdded) {
+      onAdded();
+      saveState();
+      render();
+    }
+    closeSheet();
+    if (msg) toast(msg);
+  };
+  openSheet({
+    title: 'Agregar al calendario',
+    body: `<p class="muted small" style="text-align:center;margin:0 0 10px">${esc(ev.title)}<br>${esc(describeWhen(ev.start, ev.allDay, ev.repeat))}</p>`,
+    extra: [
+      {
+        html: '<span>📱</span><span>Calendario del celular<small>Se descarga el evento con su alerta. Ábrelo y toca “Agregar”.</small></span>',
+        onClick: () => {
+          download(`${ev.title.replace(/[^\wáéíóúñ ]+/gi, '').trim().slice(0, 40) || 'evento'}.ics`, buildIcs(ev), 'text/calendar');
+          done('Abre el archivo y toca “Agregar” 📅');
+        },
+      },
+      {
+        html: '<span>📧</span><span>Outlook<small>Abre el calendario de Outlook con el evento listo para guardar.</small></span>',
+        onClick: () => { window.open(outlookUrl(ev), '_blank'); done(); },
+      },
+      {
+        html: '<span>🗓️</span><span>Google Calendar<small>Abre Google Calendar con el evento listo.</small></span>',
+        onClick: () => { window.open(googleUrl(ev), '_blank'); done(); },
+      },
+    ],
+  });
+}
+
+function dateTime(date, time) {
+  const d = parseIso(date);
+  if (time) {
+    const [h, mi] = time.split(':').map(Number);
+    d.setHours(h, mi, 0, 0);
+  }
+  return d;
+}
+
+function nextHourTime() {
+  const h = (new Date().getHours() + 1) % 24;
+  return pad2(h) + ':00';
+}
+
+function dayDiff(d) {
+  const a = new Date(d); a.setHours(0, 0, 0, 0);
+  const b = new Date(); b.setHours(0, 0, 0, 0);
+  return Math.round((a - b) / 86400000);
+}
+
+function relDay(d) {
+  const diff = dayDiff(d);
+  if (diff === 0) return 'Hoy';
+  if (diff === 1) return 'Mañana';
+  if (diff === -1) return 'Ayer';
+  return capitalize(d.toLocaleDateString('es', { weekday: 'short', day: 'numeric', month: 'short' }));
+}
+
+function timeLabel(time) {
+  if (!time) return '';
+  return dateTime(todayIso(), time).toLocaleTimeString('es', { hour: 'numeric', minute: '2-digit' });
+}
+
+function plannedEvent(p) {
+  const today = new Date();
+  let start = new Date(today.getFullYear(), today.getMonth(), Math.min(p.dueDay, daysInMonth(monthKey(today))), 9, 0);
+  if (dayDiff(start) < 0) start = new Date(today.getFullYear(), today.getMonth() + 1, p.dueDay, 9, 0);
+  return { title: `💳 Pagar ${p.name}`, notes: `Valor: ${money(p.amount)}`, start, minutes: 30, alarm: 1440, repeat: 'monthly' };
+}
+
+/* ===================== Tareas ===================== */
+
+const PRIORITIES = [['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']];
+
+function taskEvent(t) {
+  return {
+    title: '✅ ' + t.title,
+    notes: t.notes,
+    start: dateTime(t.date, t.time),
+    allDay: !t.time,
+    minutes: 30,
+    alarm: t.time ? 15 : 0,
+    repeat: 'none',
+  };
+}
+
+function taskBucket(t) {
+  if (t.done) return 'done';
+  if (!t.date) return 'nodate';
+  const diff = dayDiff(parseIso(t.date));
+  return diff < 0 ? 'late' : diff === 0 ? 'today' : diff === 1 ? 'tomorrow' : 'later';
+}
+
+function taskItem(t) {
+  const sub = [];
+  if (t.date) sub.push(`<span class="status ${taskBucket(t) === 'late' ? 'late' : taskBucket(t) === 'today' ? 'soon' : ''}">${esc(relDay(parseIso(t.date)))}${t.time ? ' ' + esc(timeLabel(t.time)) : ''}</span>`);
+  sub.push(`<span class="prio ${esc(t.priority)}"></span>${esc((PRIORITIES.find(p => p[0] === t.priority) || PRIORITIES[1])[1])}`);
+  if (t.inCal) sub.push('📅');
+  return `<li class="${t.done ? 'done' : ''}">
+    <button class="check${t.done ? ' on' : ''}" data-action="toggle-task" data-id="${esc(t.id)}" aria-label="Completar">${t.done ? '✓' : ''}</button>
+    <div class="item-main" data-action="edit-task" data-id="${esc(t.id)}">
+      <div class="item-title">${esc(t.title)}</div>
+      <div class="item-sub">${sub.join(' ')}</div>
+    </div>
+  </li>`;
+}
+
+function renderTasks() {
+  const pending = state.tasks.filter(t => !t.done);
+  const todayCount = pending.filter(t => ['late', 'today'].includes(taskBucket(t))).length;
+  const chips = [['pendientes', `Pendientes (${pending.length})`], ['hoy', `Para hoy (${todayCount})`], ['completadas', 'Completadas']];
+  $('#taskChips').innerHTML = chips.map(([id, label]) =>
+    `<button class="chip${id === taskFilter ? ' on' : ''}" data-task-filter="${id}">${esc(label)}</button>`).join('');
+
+  const prioRank = { alta: 0, media: 1, baja: 2 };
+  const sortTasks = list => [...list].sort((a, b) =>
+    (a.date || '9999').localeCompare(b.date || '9999') || (a.time || '99').localeCompare(b.time || '99') ||
+    prioRank[a.priority] - prioRank[b.priority] || a.createdAt - b.createdAt);
+
+  let groups;
+  if (taskFilter === 'completadas') {
+    const done = state.tasks.filter(t => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+    groups = [['Completadas', done, '']];
+  } else {
+    const list = taskFilter === 'hoy' ? pending.filter(t => ['late', 'today'].includes(taskBucket(t))) : pending;
+    const by = k => sortTasks(list.filter(t => taskBucket(t) === k));
+    groups = [['Atrasadas', by('late'), 'late'], ['Hoy', by('today'), ''], ['Mañana', by('tomorrow'), ''], ['Próximas', by('later'), ''], ['Sin fecha', by('nodate'), '']];
+  }
+  groups = groups.filter(g => g[1].length);
+  $('#taskGroups').innerHTML = groups.length
+    ? groups.map(([title, items, cls]) => `<div class="group-title ${cls}">${esc(title)}</div><div class="card"><ul class="list">${items.map(taskItem).join('')}</ul></div>`).join('')
+    : `<div class="empty-block">${taskFilter === 'completadas' ? 'Aún no completas tareas.' : '¡Sin pendientes! 🎉<br>Toca + para agregar una tarea.'}</div>`;
+}
+
+function toggleTask(id) {
+  const t = state.tasks.find(x => x.id === id);
+  if (!t) return;
+  t.done = !t.done;
+  t.doneAt = t.done ? Date.now() : null;
+  vibrate();
+  saveState();
+  render();
+  if (t.done) toast('¡Tarea completada! 💪');
+}
+
+function taskForm(item) {
+  openSheet({
+    title: item ? 'Editar tarea' : 'Nueva tarea',
+    body: field('Tarea', `<input name="title" class="big-input" maxlength="120" placeholder="¿Qué tienes que hacer?" required autofocus value="${esc(item?.title || '')}">`) +
+      `<div class="field-row">` +
+        field('Fecha', `<input name="date" type="date" value="${esc(item ? item.date : todayIso())}">`) +
+        field('Hora (opcional)', `<input name="time" type="time" value="${esc(item?.time || '')}">`) +
+      `</div>` +
+      `<div class="field"><span class="field-label">Prioridad</span><div class="seg-pick">` +
+        PRIORITIES.map(([v, l]) => `<label><input type="radio" name="priority" value="${v}"${(item?.priority || 'media') === v ? ' checked' : ''}><span class="prio ${v}"></span> ${l}</label>`).join('') +
+      `</div></div>` +
+      field('Notas', `<textarea name="notes" rows="3" style="min-height:80px" placeholder="Detalles (opcional)">${esc(item?.notes || '')}</textarea>`) +
+      (item ? '' : `<label class="switch-row">📅 Agregar a mi calendario<input type="checkbox" name="addCal"></label>`),
+    saveLabel: item ? 'Guardar' : 'Agregar tarea',
+    extra: item?.date ? [{ label: '📅 Agregar al calendario', onClick: () => calendarChooser(taskEvent(item), () => { item.inCal = true; }) }] : [],
+    onSubmit: d => {
+      const title = d.title.trim();
+      if (!title) return toast('Escribe la tarea'), false;
+      const data = { title, date: d.date || '', time: d.date ? d.time || '' : '', priority: d.priority || 'media', notes: d.notes.trim() };
+      let t = item;
+      if (t) Object.assign(t, data);
+      else {
+        t = { id: uid(), ...data, done: false, doneAt: null, inCal: false, createdAt: Date.now() };
+        state.tasks.push(t);
+      }
+      toast(item ? 'Tarea actualizada' : 'Tarea agregada ✅');
+      if (d.addCal) {
+        if (!t.date) toast('Ponle una fecha para pasarla al calendario');
+        else afterSheet = () => calendarChooser(taskEvent(t), () => { t.inCal = true; });
+      }
+    },
+    onDelete: item && (() => {
+      state.tasks = state.tasks.filter(t => t.id !== item.id);
+      toast('Tarea eliminada');
+    }),
+  });
+}
+
+/* ===================== Recordatorios ===================== */
+
+const PRESETS = [
+  { label: '📧 Revisar correo Outlook', title: 'Revisar correos de Outlook', repeat: 'daily', time: '08:00', app: 'outlook' },
+  { label: '💊 Medicina', title: 'Tomar medicina', repeat: 'daily', time: '08:00' },
+  { label: '💳 Pagar tarjeta', title: 'Pagar tarjeta de crédito', repeat: 'monthly', time: '09:00' },
+  { label: '🏋️ Gimnasio', title: 'Ir al gimnasio', repeat: 'daily', time: '18:00' },
+  { label: '🎂 Cumpleaños', title: 'Cumpleaños de ', repeat: 'yearly', time: '08:00' },
+  { label: '💧 Tomar agua', title: 'Tomar agua', repeat: 'daily', time: '10:00' },
+];
+
+// Próxima ocurrencia (desde hoy) de un recordatorio; null si ya pasó y no se repite.
+function nextOccurrence(r) {
+  const start = dateTime(r.date, r.time);
+  if (!RRULES[r.repeat]) return start;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (start >= today) return start;
+  const d = new Date(start);
+  if (r.repeat === 'daily') {
+    d.setFullYear(today.getFullYear(), today.getMonth(), today.getDate());
+  } else if (r.repeat === 'weekly') {
+    const weeks = Math.ceil((today - start) / (7 * 86400000));
+    d.setDate(d.getDate() + weeks * 7);
+  } else {
+    const day = start.getDate();
+    const stepMonths = r.repeat === 'yearly' ? 12 : 1;
+    let k = 0, cand;
+    do {
+      k += stepMonths;
+      const base = new Date(start.getFullYear(), start.getMonth() + k, 1, start.getHours(), start.getMinutes());
+      const last = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+      cand = new Date(base.getFullYear(), base.getMonth(), Math.min(day, last), start.getHours(), start.getMinutes());
+    } while (cand < today);
+    return cand;
+  }
+  return d;
+}
+
+function reminderEvent(r) {
+  let notes = r.notes || '';
+  if (r.app === 'outlook') notes += (notes ? '\n' : '') + 'Abre Outlook y revisa tu bandeja de entrada.';
+  return { title: '🔔 ' + r.title, notes, start: dateTime(r.date, r.time), minutes: 15, alarm: Number(r.alarm) || 0, repeat: r.repeat };
+}
+
+function reminderItem(r) {
+  const when = nextOccurrence(r);
+  const past = !RRULES[r.repeat] && when < new Date();
+  const diff = dayDiff(when);
+  const cls = past ? 'late' : diff === 0 ? 'soon' : '';
+  const label = `${relDay(when)} ${timeLabel(r.time)}`;
+  return `<li class="${r.done ? 'done' : ''}">
+    ${RRULES[r.repeat] ? `<span class="ico" style="--c:var(--accent)">${r.app === 'outlook' ? '📧' : '🔔'}</span>`
+      : `<button class="check${r.done ? ' on' : ''}" data-action="toggle-reminder" data-id="${esc(r.id)}" aria-label="Marcar como hecho">${r.done ? '✓' : ''}</button>`}
+    <div class="item-main" data-action="edit-reminder" data-id="${esc(r.id)}">
+      <div class="item-title">${esc(r.title)}</div>
+      <div class="item-sub"><span class="status ${cls}">${esc(label)}</span>${RRULES[r.repeat] ? `<span class="tag">🔁 ${esc(REPEAT_LABELS[r.repeat])}</span>` : ''}${r.inCal ? '📅' : ''}</div>
+    </div>
+    ${r.app === 'outlook' ? '<a class="pay-btn" href="ms-outlook://">Abrir</a>' : ''}
+  </li>`;
+}
+
+function renderReminders() {
+  const items = state.reminders.map(r => ({ r, when: nextOccurrence(r) })).sort((a, b) => a.when - b.when);
+  const groups = [
+    ['Hoy', items.filter(x => !x.r.done && dayDiff(x.when) === 0)],
+    ['Próximos 7 días', items.filter(x => !x.r.done && dayDiff(x.when) > 0 && dayDiff(x.when) <= 7)],
+    ['Más adelante', items.filter(x => !x.r.done && dayDiff(x.when) > 7)],
+    ['Pasados', items.filter(x => !x.r.done && dayDiff(x.when) < 0)],
+    ['Hechos', items.filter(x => x.r.done)],
+  ].filter(g => g[1].length);
+  $('#remGroups').innerHTML = groups.length
+    ? groups.map(([title, list]) => `<div class="group-title ${title === 'Pasados' ? 'late' : ''}">${esc(title)}</div><div class="card"><ul class="list">${list.map(x => reminderItem(x.r)).join('')}</ul></div>`).join('')
+    : '<div class="empty-block">No tienes recordatorios.<br>Toca + para crear uno y pasarlo a tu calendario.</div>';
+}
+
+function toggleReminder(id) {
+  const r = state.reminders.find(x => x.id === id);
+  if (!r) return;
+  r.done = !r.done;
+  vibrate();
+  saveState();
+  render();
+}
+
+function reminderForm(item, preset) {
+  const v = item || { title: preset?.title || '', date: todayIso(), time: preset?.time || nextHourTime(), repeat: preset?.repeat || 'none', alarm: 0, notes: '', app: preset?.app || '' };
+  openSheet({
+    title: item ? 'Editar recordatorio' : 'Nuevo recordatorio',
+    body: (item ? '' : `<div class="presets">${PRESETS.map((p, i) => `<button type="button" class="chip" data-preset="${i}">${esc(p.label)}</button>`).join('')}</div>`) +
+      field('Recordarme', `<input name="title" class="big-input" maxlength="120" placeholder="¿Qué te recuerdo?" required autofocus value="${esc(v.title)}">`) +
+      `<div class="field-row">` +
+        field('Fecha', `<input name="date" type="date" required value="${esc(v.date)}">`) +
+        field('Hora', `<input name="time" type="time" required value="${esc(v.time)}">`) +
+      `</div>` +
+      `<div class="field-row">` +
+        field('Repetir', `<select name="repeat">${Object.entries(REPEAT_LABELS).map(([k, l]) => `<option value="${k}"${k === v.repeat ? ' selected' : ''}>${l}</option>`).join('')}</select>`) +
+        field('Aviso', `<select name="alarm">${ALARMS.map(([m, l]) => `<option value="${m}"${m === Number(v.alarm) ? ' selected' : ''}>${l}</option>`).join('')}</select>`) +
+      `</div>` +
+      field('Notas', `<textarea name="notes" rows="2" style="min-height:70px" placeholder="Opcional">${esc(v.notes)}</textarea>`) +
+      `<input type="hidden" name="app" value="${esc(v.app || '')}">` +
+      (item ? '' : `<label class="switch-row">📅 Pasarlo a mi calendario (para que te avise)<input type="checkbox" name="addCal" checked></label>`),
+    saveLabel: item ? 'Guardar' : 'Crear recordatorio',
+    extra: item ? [{ label: '📅 Agregar al calendario', onClick: () => calendarChooser(reminderEvent(item), () => { item.inCal = true; }) }] : [],
+    onSubmit: d => {
+      const title = d.title.trim();
+      if (!title) return toast('Escribe qué te recuerdo'), false;
+      if (!d.date || !d.time) return toast('Elige fecha y hora'), false;
+      const data = { title, date: d.date, time: d.time, repeat: d.repeat, alarm: Number(d.alarm), notes: d.notes.trim(), app: d.app || '' };
+      let r = item;
+      if (r) Object.assign(r, data);
+      else {
+        r = { id: uid(), ...data, done: false, inCal: false, createdAt: Date.now() };
+        state.reminders.push(r);
+      }
+      toast(item ? 'Recordatorio actualizado' : 'Recordatorio creado 🔔');
+      if (d.addCal) afterSheet = () => calendarChooser(reminderEvent(r), () => { r.inCal = true; });
+    },
+    onDelete: item && (() => {
+      state.reminders = state.reminders.filter(r => r.id !== item.id);
+      toast('Recordatorio eliminado');
+    }),
+  });
+  sheet.querySelector('.presets')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-preset]');
+    if (!b) return;
+    const p = PRESETS[b.dataset.preset];
+    const f = $('#sheetForm');
+    f.title.value = p.title;
+    f.time.value = p.time;
+    f.repeat.value = p.repeat;
+    f.app.value = p.app || '';
+    sheet.querySelectorAll('[data-preset]').forEach(x => x.classList.toggle('on', x === b));
+    f.title.focus();
+  });
+}
+
+/* ===================== Notas ===================== */
+
+const NOTE_COLORS = ['#2b7bef', '#3fd3c6', '#fbbf24', '#f472b6', '#34d399', '#a78bfa'];
+
+function noteCard(n) {
+  const title = n.title || n.body.split('\n')[0] || 'Sin título';
+  const body = n.title ? n.body : n.body.split('\n').slice(1).join('\n');
+  const date = new Date(n.updatedAt).toLocaleDateString('es', { day: 'numeric', month: 'short' });
+  return `<button class="note-card" style="--c:${esc(n.color)}" data-action="edit-note" data-id="${esc(n.id)}">
+    <strong>${n.pinned ? '📌 ' : ''}${esc(title)}</strong>
+    ${body ? `<p>${esc(body)}</p>` : ''}
+    <small>${esc(date)}</small>
+  </button>`;
+}
+
+function sortedNotes() {
+  return [...state.notes].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.updatedAt - a.updatedAt);
+}
+
+function renderNotes() {
+  const list = sortedNotes().filter(n => !noteQuery || (n.title + ' ' + n.body).toLowerCase().includes(noteQuery));
+  $('#notesGrid').innerHTML = list.length
+    ? list.map(noteCard).join('')
+    : `<div class="empty-block">${noteQuery ? 'No hay notas con esa búsqueda.' : 'Aún no tienes notas.<br>Toca + para escribir la primera.'}</div>`;
+}
+
+function noteForm(item) {
+  const color = item?.color || NOTE_COLORS[state.notes.length % NOTE_COLORS.length];
+  openSheet({
+    title: item ? 'Nota' : 'Nueva nota',
+    body: field('Título', `<input name="title" class="big-input" maxlength="80" placeholder="Título" value="${esc(item?.title || '')}"${item ? '' : ' autofocus'}>`) +
+      `<div class="field"><textarea name="body" rows="8" placeholder="Escribe aquí…">${esc(item?.body || '')}</textarea></div>` +
+      field('Color', `<div class="color-picker">${NOTE_COLORS.map(c =>
+        `<button type="button" data-color="${c}" style="background:${c}" class="${c === color ? 'on' : ''}" aria-label="Color"></button>`).join('')}</div>`) +
+      `<input type="hidden" name="color" value="${esc(color)}">` +
+      `<label class="switch-row">📌 Fijar en Inicio<input type="checkbox" name="pinned"${item?.pinned ? ' checked' : ''}></label>`,
+    saveLabel: item ? 'Guardar' : 'Guardar nota',
+    onSubmit: d => {
+      const title = d.title.trim(), body = d.body.trim();
+      if (!title && !body) return toast('La nota está vacía'), false;
+      const data = { title, body, color: d.color, pinned: !!d.pinned, updatedAt: Date.now() };
+      if (item) Object.assign(item, data);
+      else state.notes.push({ id: uid(), ...data });
+      toast('Nota guardada 📝');
+    },
+    onDelete: item && (() => {
+      if (!confirm('¿Eliminar esta nota?')) return false;
+      state.notes = state.notes.filter(n => n.id !== item.id);
+      toast('Nota eliminada');
+    }),
+  });
+  sheet.querySelector('.color-picker').addEventListener('click', e => {
+    const b = e.target.closest('[data-color]');
+    if (!b) return;
+    sheet.querySelectorAll('.color-picker button').forEach(x => x.classList.toggle('on', x === b));
+    sheet.querySelector('[name="color"]').value = b.dataset.color;
+  });
+}
+
+/* ===================== Inicio (hub) ===================== */
+
+function agendaUrgentCount() {
+  const tasks = state.tasks.filter(t => ['late', 'today'].includes(taskBucket(t))).length;
+  const rems = state.reminders.filter(r => !r.done && dayDiff(nextOccurrence(r)) === 0).length;
+  return tasks + rems;
+}
+
+function renderHub() {
+  $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }));
+
+  const realMonth = monthKey(new Date());
+  const m = getMonth(realMonth);
+  $('#tileFin').textContent = moneyShort(totals(m).available);
+
+  const pending = state.tasks.filter(t => !t.done);
+  const todayTasks = pending.filter(t => ['late', 'today'].includes(taskBucket(t)));
+  $('#tileTasks').textContent = pending.length;
+  $('#tileTasksSub').textContent = todayTasks.length ? `${todayTasks.length} para hoy` : 'pendientes';
+
+  const upcoming = state.reminders.filter(r => !r.done)
+    .map(r => ({ r, when: nextOccurrence(r) }))
+    .filter(x => x.when >= new Date() || dayDiff(x.when) === 0)
+    .sort((a, b) => a.when - b.when);
+  $('#tileRem').textContent = upcoming.length ? upcoming[0].r.title : '—';
+  $('#tileRemSub').textContent = upcoming.length ? `${relDay(upcoming[0].when)} ${timeLabel(upcoming[0].r.time)}` : 'sin próximos';
+  $('#tileNotes').textContent = state.notes.length;
+
+  // Para hoy: tareas atrasadas/de hoy y recordatorios de hoy
+  const todayRems = upcoming.filter(x => dayDiff(x.when) === 0).map(x => x.r);
+  const rows = [...todayTasks.sort((a, b) => (a.time || '99').localeCompare(b.time || '99')).map(taskItem), ...todayRems.map(reminderItem)];
+  $('#hubToday').innerHTML = rows.length ? rows.join('') : emptyItem('Nada pendiente para hoy ✨');
+
+  // Próximos pagos del mes en curso
+  const pays = sortPlanned(m.planned.filter(p => !p.paidExpenseId), realMonth).slice(0, 3);
+  $('#hubPaysCard').hidden = !pays.length;
+  $('#hubPays').innerHTML = pays.map(p => {
+    const c = catById(p.categoryId);
+    const st = dueStatus(p, realMonth);
+    return `<li>
+      ${catIcon(c)}
+      <div class="item-main" data-goto="finanzas" data-sub="presupuesto">
+        <div class="item-title">${esc(p.name)}</div>
+        <div class="item-sub"><span class="status ${st.cls}">${esc(st.text)}</span>${money(p.amount)}</div>
+      </div>
+      <button class="pay-btn" data-action="toggle-paid" data-id="${esc(p.id)}" data-month="${realMonth}">Pagar</button>
+    </li>`;
+  }).join('');
+
+  const pinned = sortedNotes().filter(n => n.pinned).slice(0, 4);
+  $('#hubNotesCard').hidden = !pinned.length;
+  $('#hubNotes').innerHTML = pinned.map(noteCard).join('');
+}
+
+function fabAction() {
+  if (currentView === 'finanzas') return expenseForm(null);
+  if (currentView === 'agenda') return agendaSub === 'tareas' ? taskForm(null) : reminderForm(null);
+  if (currentView === 'notas') return noteForm(null);
+  const opts = [['gasto', '🧾', 'Gasto'], ['tarea', '✅', 'Tarea'], ['recordatorio', '🔔', 'Recordatorio'], ['nota', '📝', 'Nota']];
+  openSheet({
+    title: '¿Qué quieres agregar?',
+    body: `<div class="quick-grid">${opts.map(([k, ic, l]) => `<button type="button" data-action="quick" data-kind="${k}"><span>${ic}</span>${l}</button>`).join('')}</div>`,
+  });
+}
+
+function quickAdd(kind) {
+  if (kind === 'gasto') return expenseForm(null);
+  if (kind === 'tarea') return taskForm(null);
+  if (kind === 'recordatorio') return reminderForm(null);
+  return noteForm(null);
+}
+
 /* ===================== Bienvenida ===================== */
 
 function startOnboarding() {
@@ -860,7 +1448,16 @@ function startOnboarding() {
 
 document.addEventListener('click', e => {
   const nav = e.target.closest('[data-goto]');
-  if (nav) return goto(nav.dataset.goto);
+  if (nav) return goto(nav.dataset.goto, nav.dataset.sub);
+
+  const seg = e.target.closest('.seg [data-sub]');
+  if (seg) return goto(currentView, seg.dataset.sub);
+
+  const tchip = e.target.closest('[data-task-filter]');
+  if (tchip) {
+    taskFilter = tchip.dataset.taskFilter;
+    return renderTasks();
+  }
 
   const chip = e.target.closest('[data-filter]');
   if (chip) {
@@ -881,13 +1478,26 @@ document.addEventListener('click', e => {
   const m = getMonth();
   switch (el.dataset.action) {
     case 'open-settings': return goto('ajustes');
+    case 'fab': return fabAction();
+    case 'add-task': return taskForm(null);
+    case 'edit-task': return taskForm(state.tasks.find(x => x.id === id));
+    case 'toggle-task': return toggleTask(id);
+    case 'add-reminder': return reminderForm(null);
+    case 'edit-reminder': return reminderForm(state.reminders.find(x => x.id === id));
+    case 'preset-outlook': return reminderForm(null, PRESETS[0]);
+    case 'add-note': return noteForm(null);
+    case 'edit-note': return noteForm(state.notes.find(x => x.id === id));
     case 'add-expense': return expenseForm(null);
     case 'edit-expense': return expenseForm(m.expenses.find(x => x.id === id));
     case 'add-income': return incomeForm(null);
     case 'edit-income': return incomeForm(m.incomes.find(x => x.id === id));
     case 'add-planned': return plannedForm(null);
     case 'edit-planned': return plannedForm(m.planned.find(x => x.id === id));
-    case 'toggle-paid': return togglePaid(id);
+    case 'toggle-paid':
+      if (el.dataset.month) currentMonth = el.dataset.month;
+      return togglePaid(id);
+    case 'toggle-reminder': return toggleReminder(id);
+    case 'quick': return quickAdd(el.dataset.kind);
     case 'add-category': return categoryForm(null);
     case 'edit-category': return categoryForm(state.categories.find(x => x.id === id));
   }
@@ -903,7 +1513,7 @@ document.querySelector('main').addEventListener('touchstart', e => {
   touchStart = e.target.closest('.chips-scroll') ? null : { x: t.clientX, y: t.clientY };
 }, { passive: true });
 document.querySelector('main').addEventListener('touchend', e => {
-  if (!touchStart || currentView === 'ajustes') return;
+  if (!touchStart || currentView !== 'finanzas') return;
   const t = e.changedTouches[0];
   const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
   touchStart = null;
@@ -917,6 +1527,16 @@ $('#profileName').addEventListener('input', e => {
   state.profile.name = e.target.value.trim();
   saveState();
   renderHeader();
+});
+
+$('#outlookType').addEventListener('change', e => {
+  state.settings.outlook = e.target.value;
+  saveState();
+});
+
+$('#noteSearch').addEventListener('input', e => {
+  noteQuery = e.target.value.trim().toLowerCase();
+  renderNotes();
 });
 
 $('#currency').addEventListener('change', e => {
@@ -949,7 +1569,7 @@ function download(filename, content, type) {
 }
 
 $('#exportJson').addEventListener('click', () => {
-  download(`presupuesto-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json');
+  download(`maurix-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json');
 });
 
 $('#importJson').addEventListener('change', async e => {
@@ -992,6 +1612,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 render();
+goto('hub');
 if (!state.profile.onboarded) startOnboarding();
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

@@ -1,8 +1,9 @@
 {
-  "name": "Mi Presupuesto",
-  "short_name": "Presupuesto",
-  "description": "Presupuesto personal: ingresos, gastos proyectados y gastos adicionales por categoría.",
+  "name": "MAURIX",
+  "short_name": "MAURIX",
+  "description": "MAURIX: finanzas, tareas, recordatorios y notas en una sola app.",
   "lang": "es",
+  "id": "maurix",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

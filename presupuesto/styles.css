@@ -135,7 +135,6 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 
 .month-switch {
   display: flex; align-items: center; justify-content: center; gap: 10px;
-  margin: 8px auto 4px;
 }
 .month-switch span {
   min-width: 150px; text-align: center;
@@ -192,6 +191,7 @@ main { max-width: 640px; margin: 0 auto; padding: 10px 16px; }
 .hero-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; position: relative; z-index: 1; }
 .hero-row > div {
   background: rgba(255, 255, 255, 0.16);
+  min-width: 0;
   border-radius: 16px;
   padding: 10px 12px;
   font-size: 0.8rem;
@@ -584,3 +584,144 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
   text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ===================== MAURIX: hub y módulos ===================== */
+.mt { margin-top: 10px; }
+.subview { display: none; flex-direction: column; gap: 14px; }
+.subview.active { display: flex; animation: fade-in .25s ease; }
+.month-switch { margin: 0 auto; }
+
+.wordmark {
+  font-weight: 900;
+  letter-spacing: 0.32em;
+  font-size: 1.05rem;
+  background: var(--grad);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent;
+}
+.wordmark.small { font-size: 0.85rem; }
+.about { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 6px 0 0; line-height: 1.8; }
+
+.today-line { margin: 0; color: var(--muted); font-weight: 600; font-size: 0.9rem; }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tile {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 22px;
+  padding: 14px;
+  font: inherit;
+  display: flex; flex-direction: column; gap: 2px;
+  cursor: pointer;
+  transition: transform .12s;
+}
+.tile:active { transform: scale(0.97); }
+.tile-ico { font-size: 1.5rem; margin-bottom: 6px; }
+.tile-name { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.tile strong { font-size: 1.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tile small { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-fin { background: var(--grad); border: 0; color: #fff; box-shadow: var(--shadow); }
+.tile-fin .tile-name, .tile-fin small { color: rgba(255, 255, 255, 0.85); }
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.seg.two { grid-template-columns: 1fr 1fr; }
+.seg button {
+  position: relative;
+  border: 0; border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit; font-size: 0.8rem; font-weight: 700;
+  padding: 9px 2px;
+  cursor: pointer;
+}
+.seg button.on { background: var(--grad); color: #fff; }
+.badge-dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--expense); }
+
+.prio { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.prio.alta { background: var(--expense); }
+.prio.media { background: var(--warn); }
+.prio.baja { background: var(--income); }
+.done .item-title { text-decoration: line-through; color: var(--muted); }
+.group-title { font-size: 0.78rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 4px 4px -6px; }
+.group-title.late { color: var(--expense); }
+
+.outlook-card { display: flex; flex-direction: column; gap: 10px; }
+.outlook-card p { margin: 4px 0 0; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+a.chip-btn, a.pay-btn { text-decoration: none; display: inline-block; }
+
+.seg-pick { display: flex; gap: 8px; flex-wrap: wrap; }
+.seg-pick label {
+  flex: 1;
+  text-align: center;
+  padding: 10px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 0.85rem; font-weight: 600;
+  cursor: pointer;
+}
+.seg-pick input { display: none; }
+.seg-pick label:has(input:checked) { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 22%, transparent); }
+
+.big-input { font-size: 1.15rem; font-weight: 700; }
+textarea { resize: none; min-height: 140px; line-height: 1.5; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 14px; font-weight: 600; font-size: 0.92rem; cursor: pointer; }
+.switch-row input { width: 22px; height: 22px; accent-color: var(--primary); }
+
+.presets { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 -18px 14px; padding: 0 18px; }
+.presets::-webkit-scrollbar { display: none; }
+
+.sheet-extra { display: flex; flex-direction: column; gap: 8px; }
+.sheet-extra:empty { display: none; }
+.cal-btn { display: flex; align-items: center; gap: 12px; text-align: left; }
+.cal-btn span:first-child { font-size: 1.4rem; }
+.cal-btn small { display: block; font-weight: 500; color: var(--muted); font-size: 0.78rem; }
+
+.quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.quick-grid button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 18px;
+  padding: 18px 10px;
+  font: inherit; font-weight: 700;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  cursor: pointer;
+}
+.quick-grid button span { font-size: 1.8rem; }
+
+.search { border-radius: 16px; }
+.notes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.note-card {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 18px;
+  padding: 14px;
+  font: inherit;
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 110px;
+  cursor: pointer;
+  border-top: 4px solid var(--c, var(--primary));
+}
+.card .note-card { background: var(--surface-2); }
+.note-card strong { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-card p { margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.note-card small { color: var(--muted); font-size: 0.7rem; margin-top: auto; }
+.empty-block { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 28px 10px; font-size: 0.92rem; background: var(--surface); border: 1px dashed var(--border); border-radius: 18px; }
+
+#taskGroups, #remGroups { display: flex; flex-direction: column; gap: 14px; }
