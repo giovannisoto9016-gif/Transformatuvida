@@ -164,14 +164,19 @@
           <span class="hero-note" id="heroNote"></span>
         </div>
 
-        <div class="card card-credit" id="cardBox" hidden>
+        <div class="card" id="accountsCard">
           <div class="card-head">
-            <div>
-              <span class="muted small">💳 Tarjeta de crédito · debes</span>
-              <strong class="credit-debt" id="cardDebt">$0</strong>
-              <span class="muted small" id="cardMonth"></span>
+            <h2>🏦 Mis cuentas</h2>
+            <div class="row-btns">
+              <button class="chip-btn" data-action="transfer">↔ Mover</button>
+              <button class="chip-btn" data-action="add-account">+ Cuenta</button>
             </div>
-            <button class="pay-btn" data-action="pay-card">Pagar</button>
+          </div>
+          <ul class="list" id="accountsList"></ul>
+          <div class="acc-total">
+            <span class="muted small">Total en bancos y efectivo</span>
+            <strong id="accountsTotal">$0</strong>
+            <span class="neg small" id="accountsDebt"></span>
           </div>
         </div>
 
@@ -358,13 +363,9 @@
       </div>
 
       <div class="card">
-        <h2>Forma de pago por defecto</h2>
-        <p class="muted small">La que aparece seleccionada al registrar un gasto. Efectivo y débito descuentan de tu dinero; crédito se suma a la deuda de la tarjeta.</p>
-        <select id="defaultMethod" class="mt">
-          <option value="debito">🏦 Débito</option>
-          <option value="efectivo">💵 Efectivo</option>
-          <option value="credito">💳 Crédito</option>
-        </select>
+        <h2>Cuenta por defecto</h2>
+        <p class="muted small">La que aparece seleccionada al registrar un gasto. Efectivo y tarjeta débito descuentan de esa cuenta; tarjeta crédito se suma a lo que debes en esa tarjeta.</p>
+        <select id="defaultAccount" class="mt"></select>
       </div>
 
       <div class="card">

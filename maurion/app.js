@@ -62,6 +62,8 @@ function defaultState() {
     utils: { docs: [] },
     vehicles: [],
     fuel: [],
+    accounts: defaultAccounts(),
+    transfers: [],
     settings: { outlook: 'personal', rollover: true, badge: false },
     security: { pinHash: null, salt: null, credId: null, lockAfter: 1 },
   };
@@ -105,6 +107,20 @@ function normalizeState(s) {
   s.fuel = Array.isArray(s.fuel) ? s.fuel : [];
   s.settings = { outlook: 'personal', rollover: true, badge: false, ...(s.settings || {}) };
   s.security = { pinHash: null, salt: null, credId: null, lockAfter: 1, ...(s.security || {}) };
+  // Migración: antes cada gasto tenía solo una forma de pago; ahora pertenece a una cuenta.
+  if (!Array.isArray(s.accounts)) {
+    s.accounts = defaultAccounts();
+    for (const m of Object.values(s.months)) {
+      (m.incomes || []).forEach(i => { if (!i.accountId) i.accountId = 'debito'; });
+      (m.expenses || []).forEach(e => {
+        if (!e.accountId) e.accountId = e.method || 'debito';
+        if (e.cardPayment && !e.toAccountId) e.toAccountId = 'credito';
+      });
+    }
+    (s.fuel || []).forEach(f => { if (!f.accountId) f.accountId = f.method || 'debito'; });
+    s.settings.defaultAccount = s.settings.defaultMethod || 'debito';
+  }
+  s.transfers = Array.isArray(s.transfers) ? s.transfers : [];
   s.version = 3;
   return s;
 }
@@ -297,60 +313,250 @@ function monthName(key) {
   return new Date(y, mo - 1, 1).toLocaleDateString('es', { month: 'long' });
 }
 
-/* ----- Formas de pago ----- */
+/* ----- Cuentas: efectivo, tarjetas débito y tarjetas crédito ----- */
 
-const METHODS = [['efectivo', '💵', 'Efectivo'], ['debito', '🏦', 'Débito'], ['credito', '💳', 'Crédito']];
+const ACCOUNT_TYPES = {
+  efectivo: { icon: '💵', label: 'Efectivo' },
+  debito: { icon: '🏦', label: 'Tarjeta débito' },
+  credito: { icon: '💳', label: 'Tarjeta crédito' },
+};
+const BANKS = [
+  ['Bancolombia', '#fdda24'], ['Nequi', '#da0081'], ['Davivienda', '#ed1c27'], ['Daviplata', '#ef4444'],
+  ['BBVA', '#1464a5'], ['Banco de Bogotá', '#0a4b8c'], ['Nu', '#820ad1'], ['Falabella', '#1d8a3c'],
+  ['Caja Social', '#0060a8'], ['AV Villas', '#e30613'], ['Colpatria', '#ec111a'], ['Itaú', '#ec7000'],
+  ['Lulo Bank', '#b5d000'], ['Banco Popular', '#00843d'], ['Occidente', '#0047ba'],
+];
 
-function methodOf(e) {
-  return e.method || 'debito';
+function defaultAccounts() {
+  return [
+    { id: 'efectivo', name: 'Efectivo', type: 'efectivo', initial: 0, color: '#34d399' },
+    { id: 'debito', name: 'Tarjeta débito', type: 'debito', initial: 0, color: '#2b7bef' },
+    { id: 'credito', name: 'Tarjeta crédito', type: 'credito', initial: 0, limit: null, color: '#fbbf24' },
+  ];
 }
 
-// Efectivo y débito salen de tu dinero; lo de crédito queda como deuda de la tarjeta.
+function accountById(id) {
+  return state.accounts.find(a => a.id === id);
+}
+
+function defaultAccountId() {
+  const id = state.settings.defaultAccount;
+  if (accountById(id)) return id;
+  return (state.accounts.find(a => a.type !== 'credito') || state.accounts[0])?.id;
+}
+
+function accountOf(e) {
+  return accountById(e.accountId) || accountById(e.method) || null;
+}
+
+function methodOf(e) {
+  return accountOf(e)?.type || e.method || 'debito';
+}
+
+// Efectivo y débito salen de tu dinero; lo de tarjeta crédito queda como deuda de esa tarjeta.
 function isCash(e) {
   return methodOf(e) !== 'credito';
 }
 
-function methodIcon(m) {
-  const x = METHODS.find(y => y[0] === (m || 'debito'));
-  return `<span class="method" title="${x[2]}">${x[1]}</span>`;
+function accountTag(e) {
+  const a = accountOf(e);
+  if (!a) return '';
+  return `<span class="acc-tag" style="--c:${esc(a.color)}">${ACCOUNT_TYPES[a.type].icon} ${esc(a.name)}</span>`;
 }
 
-function methodPicker(selected, onlyCash) {
-  return `<div class="field"><span class="field-label">Forma de pago</span><div class="seg-pick">` +
-    METHODS.filter(m => !onlyCash || m[0] !== 'credito').map(([v, ic, l]) =>
-      `<label><input type="radio" name="method" value="${v}"${(selected || state.settings.defaultMethod || 'debito') === v ? ' checked' : ''}>${ic} ${l}</label>`).join('') +
+function accountPicker(selected, { noCredit = false, label = '¿Con qué pagaste?' } = {}) {
+  const list = state.accounts.filter(a => !noCredit || a.type !== 'credito');
+  const sel = list.some(a => a.id === selected) ? selected : (list.find(a => a.id === defaultAccountId()) || list[0])?.id;
+  return `<div class="field"><span class="field-label">${esc(label)}</span><div class="acc-pick">` +
+    list.map(a => `<label style="--c:${esc(a.color)}"><input type="radio" name="accountId" value="${esc(a.id)}"${a.id === sel ? ' checked' : ''}>` +
+      `<span>${ACCOUNT_TYPES[a.type].icon}</span><span>${esc(a.name)}</span></label>`).join('') +
     `</div></div>`;
 }
 
-// Deuda de la tarjeta: compras con crédito menos los pagos a la tarjeta.
-function cardDebt() {
-  let debt = 0;
+// Saldo de una cuenta (en las de crédito es lo que se debe).
+function accountBalance(acc, withInitial = true) {
+  let b = withInitial ? acc.initial || 0 : 0;
   for (const m of Object.values(state.months)) {
+    if (acc.type !== 'credito') for (const i of m.incomes) if (i.accountId === acc.id) b += i.amount;
     for (const e of m.expenses) {
-      if (!isCash(e)) debt += e.amount;
-      if (e.cardPayment) debt -= e.amount;
+      if (e.accountId === acc.id) b += acc.type === 'credito' ? e.amount : -e.amount;
+      if (e.cardPayment && e.toAccountId === acc.id) b -= e.amount;
     }
   }
-  return Math.round(debt * 100) / 100;
+  for (const t of state.transfers) {
+    if (t.from === acc.id) b -= t.amount;
+    if (t.to === acc.id) b += t.amount;
+  }
+  return Math.round(b * 100) / 100;
 }
 
-function payCardForm() {
+function cardDebt() {
+  return sum(state.accounts.filter(a => a.type === 'credito'), a => accountBalance(a));
+}
+
+function accountMovements(acc) {
+  const list = [];
+  for (const m of Object.values(state.months)) {
+    if (acc.type !== 'credito') for (const i of m.incomes) if (i.accountId === acc.id) list.push({ date: null, label: '💰 ' + i.name, amount: i.amount });
+    for (const e of m.expenses) {
+      if (e.accountId === acc.id) list.push({ date: e.date, label: `${catById(e.categoryId).emoji} ${e.note || catById(e.categoryId).name}`, amount: acc.type === 'credito' ? e.amount : -e.amount });
+      if (e.cardPayment && e.toAccountId === acc.id) list.push({ date: e.date, label: '✅ Pago a la tarjeta', amount: -e.amount });
+    }
+  }
+  for (const t of state.transfers) {
+    if (t.from === acc.id) list.push({ date: t.date, label: `↔ A ${accountById(t.to)?.name || 'otra cuenta'}`, amount: -t.amount });
+    if (t.to === acc.id) list.push({ date: t.date, label: `↔ Desde ${accountById(t.from)?.name || 'otra cuenta'}`, amount: t.amount });
+  }
+  return list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+
+function renderAccounts() {
+  const cash = state.accounts.filter(a => a.type !== 'credito');
+  const credit = state.accounts.filter(a => a.type === 'credito');
+  const row = a => {
+    const bal = accountBalance(a);
+    const sub = a.type === 'credito'
+      ? (a.limit ? `Cupo disponible ${money(a.limit - bal)}` : 'Lo que debes')
+      : ACCOUNT_TYPES[a.type].label;
+    return `<li>
+      <span class="ico acc-ico" style="--c:${esc(a.color)}">${ACCOUNT_TYPES[a.type].icon}</span>
+      <div class="item-main" data-action="open-account" data-id="${esc(a.id)}">
+        <div class="item-title">${esc(a.name)}</div>
+        <div class="item-sub">${esc(sub)}</div>
+      </div>
+      <span class="amount ${a.type === 'credito' ? (bal > 0 ? 'neg' : '') : bal < 0 ? 'neg' : 'pos'}">${(a.type === 'credito' ? bal > 0 : bal < 0) ? '−' : ''}${money(Math.abs(bal))}</span>
+    </li>`;
+  };
+  $('#accountsList').innerHTML = cash.map(row).join('') + (credit.length ? `<li class="acc-sep">Tarjetas de crédito</li>` + credit.map(row).join('') : '');
+  $('#accountsTotal').textContent = money(sum(cash, a => accountBalance(a)));
   const debt = cardDebt();
+  $('#accountsDebt').textContent = debt > 0 ? `Debes en tarjetas: ${money(debt)}` : '';
+}
+
+function accountSheet(acc) {
+  const bal = accountBalance(acc);
+  const moves = accountMovements(acc).slice(0, 12);
+  const extra = [{ label: '✏️ Editar cuenta', onClick: () => accountForm(acc) }];
+  if (acc.type === 'credito') extra.unshift({ label: '💳 Pagar esta tarjeta', onClick: () => payCardForm(acc.id) });
+  else extra.unshift({ label: '↔ Mover dinero', onClick: () => transferForm(acc.id) });
   openSheet({
-    title: '💳 Pagar tarjeta de crédito',
+    title: `${ACCOUNT_TYPES[acc.type].icon} ${acc.name}`,
+    body: `<div class="acc-balance"><span class="muted small">${acc.type === 'credito' ? 'Deuda actual' : 'Saldo actual'}</span>
+        <strong class="${acc.type === 'credito' ? (bal > 0 ? 'neg' : '') : bal < 0 ? 'neg' : 'pos'}">${money(bal)}</strong>
+        ${acc.type === 'credito' && acc.limit ? `<span class="muted small">Cupo ${money(acc.limit)} · disponible ${money(acc.limit - bal)}</span>` : ''}</div>
+      <div class="group-title" style="margin:14px 4px 4px">Últimos movimientos</div>
+      <ul class="list">${moves.length ? moves.map(mv => `<li>
+        <div class="item-main"><div class="item-title">${esc(mv.label)}</div><div class="item-sub">${mv.date ? esc(formatDate(mv.date)) : 'Ingreso'}</div></div>
+        <span class="amount ${mv.amount >= 0 === (acc.type !== 'credito') ? 'pos' : 'neg'}">${mv.amount >= 0 ? '+' : '−'}${money(Math.abs(mv.amount))}</span>
+      </li>`).join('') : emptyItem('Sin movimientos todavía.')}</ul>`,
+    extra,
+  });
+}
+
+function accountForm(item) {
+  const v = item || { name: '', type: 'debito', color: PALETTE[state.accounts.length % PALETTE.length], limit: null };
+  const current = item ? accountBalance(item) : '';
+  openSheet({
+    title: item ? 'Editar cuenta' : 'Nueva cuenta',
+    body: (item ? '' : `<div class="presets">${BANKS.map(([n], i) => `<button type="button" class="chip" data-bank="${i}">${esc(n)}</button>`).join('')}</div>`) +
+      field('Nombre', `<input name="name" class="big-input" maxlength="40" placeholder="Ej. Bancolombia, Nequi, Visa Davivienda" required value="${esc(v.name)}"${item ? '' : ' autofocus'}>`) +
+      `<div class="field"><span class="field-label">Tipo</span><div class="seg-pick">` +
+        Object.entries(ACCOUNT_TYPES).map(([k, t]) => `<label><input type="radio" name="type" value="${k}"${v.type === k ? ' checked' : ''}>${t.icon} ${t.label}</label>`).join('') +
+      `</div></div>` +
+      `<div class="field-row">` +
+        field('Saldo actual / deuda actual', `<input name="balance" inputmode="decimal" placeholder="$ 0" value="${current === '' ? '' : esc(current)}">`) +
+        `<div class="field" id="limitField">${'<label>Cupo total (crédito)</label>'}<input name="limit" inputmode="decimal" placeholder="Opcional" value="${v.limit ? esc(v.limit) : ''}"></div>` +
+      `</div>` +
+      `<p class="muted small" style="margin:-6px 0 12px">En débito y efectivo es lo que tienes hoy; en tarjeta crédito es lo que debes hoy.</p>` +
+      `<input type="hidden" name="color" value="${esc(v.color)}">`,
+    saveLabel: item ? 'Guardar' : 'Agregar cuenta',
+    onSubmit: d => {
+      const name = d.name.trim();
+      if (!name) return toast('Ponle un nombre a la cuenta'), false;
+      const bank = BANKS.find(([n]) => normalizeText(name).includes(normalizeText(n)));
+      const acc = item || { id: uid(), initial: 0 };
+      Object.assign(acc, { name, type: d.type, color: bank ? bank[1] : d.color, limit: d.type === 'credito' ? parseAmount(d.limit) : null });
+      const wanted = String(d.balance).trim() === '' ? null : (String(d.balance).trim().startsWith('-') ? -1 : 1) * (parseAmount(String(d.balance).replace('-', '')) || 0);
+      if (!item) state.accounts.push(acc);
+      if (wanted != null) acc.initial = Math.round((wanted - accountBalance(acc, false)) * 100) / 100;
+      toast(item ? 'Cuenta actualizada' : `${ACCOUNT_TYPES[acc.type].icon} ${name} agregada`);
+    },
+    onDelete: item && state.accounts.length > 1 && (() => {
+      const target = state.accounts.find(a => a.id !== item.id && a.type !== 'credito') || state.accounts.find(a => a.id !== item.id);
+      if (!confirm(`¿Eliminar ${item.name}? Sus movimientos pasarán a “${target.name}”.`)) return false;
+      for (const m of Object.values(state.months)) {
+        for (const x of [...m.incomes, ...m.expenses]) {
+          if (x.accountId === item.id) x.accountId = target.id;
+          if (x.toAccountId === item.id) x.toAccountId = target.id;
+        }
+      }
+      state.fuel.forEach(f => { if (f.accountId === item.id) f.accountId = target.id; });
+      state.transfers = state.transfers.filter(t => t.from !== item.id && t.to !== item.id);
+      state.accounts = state.accounts.filter(a => a.id !== item.id);
+      if (state.settings.defaultAccount === item.id) state.settings.defaultAccount = target.id;
+      toast('Cuenta eliminada');
+    }),
+  });
+  const sync = () => { $('#limitField').style.visibility = $('#sheetForm').type.value === 'credito' ? 'visible' : 'hidden'; };
+  sheet.querySelectorAll('[name="type"]').forEach(r => r.addEventListener('change', sync));
+  sync();
+  sheet.querySelector('.presets')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-bank]');
+    if (!b) return;
+    const [name, color] = BANKS[b.dataset.bank];
+    const f = $('#sheetForm');
+    f.name.value = name;
+    f.color.value = color;
+    if (/nequi|daviplata/i.test(name)) f.type.value = 'debito';
+    sheet.querySelectorAll('[data-bank]').forEach(x => x.classList.toggle('on', x === b));
+    f.balance.focus();
+  });
+}
+
+function payCardForm(creditId) {
+  const cards = state.accounts.filter(a => a.type === 'credito');
+  if (!cards.length) return toast('No tienes tarjetas de crédito registradas');
+  const card = accountById(creditId) || cards.find(a => accountBalance(a) > 0) || cards[0];
+  const debt = accountBalance(card);
+  openSheet({
+    title: `💳 Pagar ${card.name}`,
     body: amountInput(debt > 0 ? debt : null) +
       `<p class="muted small" style="text-align:center;margin:-6px 0 14px">Debes ${money(debt)}. Puedes pagar todo o una parte.</p>` +
-      methodPicker('debito', true) +
+      accountPicker(defaultAccountId(), { noCredit: true, label: '¿Desde qué cuenta pagas?' }) +
       field('Fecha', `<input name="date" type="date" required value="${esc(defaultDateForMonth())}">`),
     saveLabel: 'Registrar pago',
     onSubmit: d => {
       const amount = parseAmount(d.amount);
       if (!amount) return toast('Escribe un monto válido'), false;
       getMonth(d.date.slice(0, 7), true).expenses.push({
-        id: uid(), amount, categoryId: 'deudas', note: 'Pago tarjeta de crédito', date: d.date,
-        method: d.method || 'debito', cardPayment: true, plannedId: null, createdAt: Date.now(),
+        id: uid(), amount, categoryId: 'deudas', note: `Pago ${card.name}`, date: d.date,
+        accountId: d.accountId, toAccountId: card.id, cardPayment: true, plannedId: null, createdAt: Date.now(),
       });
       toast('Pago de tarjeta registrado 💳');
+    },
+  });
+}
+
+function transferForm(fromId) {
+  const list = state.accounts.filter(a => a.type !== 'credito');
+  if (list.length < 2) return toast('Agrega al menos dos cuentas (por ejemplo Bancolombia y Efectivo)');
+  const from = list.some(a => a.id === fromId) ? fromId : list[0].id;
+  const to = list.find(a => a.id !== from).id;
+  const pick = (name, sel, label) => `<div class="field"><span class="field-label">${label}</span><div class="acc-pick">` +
+    list.map(a => `<label style="--c:${esc(a.color)}"><input type="radio" name="${name}" value="${esc(a.id)}"${a.id === sel ? ' checked' : ''}><span>${ACCOUNT_TYPES[a.type].icon}</span><span>${esc(a.name)}</span></label>`).join('') +
+    `</div></div>`;
+  openSheet({
+    title: '↔ Mover dinero',
+    body: amountInput(null) + pick('from', from, 'Sale de') + pick('to', to, 'Llega a') +
+      `<p class="muted small" style="margin:-6px 0 12px">Ej.: retiro en cajero (Bancolombia → Efectivo) o pasar a Nequi. No cuenta como gasto.</p>` +
+      field('Fecha', `<input name="date" type="date" required value="${esc(todayIso())}">`),
+    saveLabel: 'Mover',
+    onSubmit: d => {
+      const amount = parseAmount(d.amount);
+      if (!amount) return toast('Escribe un monto válido'), false;
+      if (d.from === d.to) return toast('Elige cuentas diferentes'), false;
+      state.transfers.push({ id: uid(), from: d.from, to: d.to, amount, date: d.date, createdAt: Date.now() });
+      toast(`↔ ${money(amount)}: ${accountById(d.from).name} → ${accountById(d.to).name}`);
     },
   });
 }
@@ -478,11 +684,7 @@ function renderInicio() {
       ? `⚠️ Tu plan supera tus ingresos por ${money(-t.available)}.`
       : `Has usado el ${pct}% de tus ingresos · Por pagar: ${money(t.pending)}`;
 
-  // Tarjeta de crédito
-  const debt = cardDebt();
-  $('#cardBox').hidden = !(debt > 0 || t.credit > 0);
-  $('#cardDebt').textContent = money(debt);
-  $('#cardMonth').textContent = t.credit ? `Compras con crédito este mes: ${money(t.credit)}` : 'Sin compras con crédito este mes';
+  renderAccounts();
 
   // Recordatorios: pagos pendientes ordenados por urgencia
   const pending = sortPlanned(m.planned.filter(p => !p.paidExpenseId), currentMonth).slice(0, 4);
@@ -546,7 +748,7 @@ function expenseItem(e) {
     ${catIcon(c)}
     <div class="item-main" data-action="edit-expense" data-id="${esc(e.id)}">
       <div class="item-title">${esc(e.note || c.name)}</div>
-      <div class="item-sub">${methodIcon(e.method)} ${esc(c.name)} · ${esc(formatDate(e.date))}${e.plannedId ? '<span class="tag">fijo</span>' : ''}${isCash(e) ? '' : '<span class="tag">a crédito</span>'}</div>
+      <div class="item-sub">${esc(c.name)} · ${esc(formatDate(e.date))}${e.plannedId ? '<span class="tag">fijo</span>' : ''} ${accountTag(e)}</div>
     </div>
     <span class="amount ${isCash(e) ? 'neg' : 'credit'}">−${money(e.amount)}</span>
   </li>`;
@@ -684,7 +886,8 @@ function renderAnalisis() {
 
 function renderAjustes() {
   $('#outlookType').value = state.settings.outlook;
-  $('#defaultMethod').value = state.settings.defaultMethod || 'debito';
+  $('#defaultAccount').innerHTML = state.accounts.map(a => `<option value="${esc(a.id)}">${ACCOUNT_TYPES[a.type].icon} ${esc(a.name)}</option>`).join('');
+  $('#defaultAccount').value = defaultAccountId();
   const nameInput = $('#profileName');
   if (document.activeElement !== nameInput) nameInput.value = state.profile.name || '';
 
@@ -815,14 +1018,15 @@ function incomeForm(item) {
   openSheet({
     title: item ? 'Editar ingreso' : 'Nuevo ingreso',
     body: amountInput(item?.amount) +
-      field('Concepto', `<input name="name" maxlength="60" placeholder="Salario, negocio, extra…" value="${esc(item?.name || '')}">`),
+      field('Concepto', `<input name="name" maxlength="60" placeholder="Salario, negocio, extra…" value="${esc(item?.name || '')}">`) +
+      accountPicker(item?.accountId, { noCredit: true, label: '¿A qué cuenta llega?' }),
     onSubmit: d => {
       const amount = parseAmount(d.amount);
       if (!amount) return toast('Escribe un monto válido'), false;
       const name = d.name.trim() || 'Ingreso';
       const m = ensureMonth();
-      if (item) Object.assign(item, { amount, name });
-      else m.incomes.push({ id: uid(), name, amount });
+      if (item) Object.assign(item, { amount, name, accountId: d.accountId });
+      else m.incomes.push({ id: uid(), name, amount, accountId: d.accountId });
       toast('Ingreso guardado 💰');
     },
     onDelete: item && (() => {
@@ -885,7 +1089,7 @@ function togglePaid(id) {
     if (!todayIso().startsWith(currentMonth) && p.dueDay) {
       date = currentMonth + '-' + String(Math.min(p.dueDay, daysInMonth(currentMonth))).padStart(2, '0');
     }
-    const exp = { id: uid(), date, amount: p.amount, categoryId: p.categoryId, note: p.name, method: state.settings.defaultMethod || 'debito', plannedId: p.id, createdAt: Date.now() };
+    const exp = { id: uid(), date, amount: p.amount, categoryId: p.categoryId, note: p.name, accountId: defaultAccountId(), plannedId: p.id, createdAt: Date.now() };
     m.expenses.push(exp);
     p.paidExpenseId = exp.id;
     toast('¡Pagado! ✅');
@@ -904,7 +1108,7 @@ function expenseForm(item) {
     title: item ? 'Editar gasto' : 'Nuevo gasto',
     body: amountInput(item?.amount) +
       catPicker(item?.categoryId || 'mercado') +
-      methodPicker(item?.method) +
+      accountPicker(item?.accountId) +
       field('Descripción', `<input name="note" maxlength="80" placeholder="¿En qué gastaste?" value="${esc(item?.note || '')}">`) +
       field('Fecha', `<input name="date" type="date" required value="${esc(item?.date || defaultDateForMonth())}">`) +
       (linked ? `<p class="muted small">Este es el pago de tu gasto fijo “${esc(linked.name)}”.</p>` : ''),
@@ -914,7 +1118,7 @@ function expenseForm(item) {
       if (!amount) return toast('Escribe un monto válido'), false;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return toast('Elige una fecha'), false;
       const targetKey = d.date.slice(0, 7);
-      const data = { amount, categoryId: d.categoryId || FALLBACK_CAT, note: d.note.trim(), date: d.date, method: d.method || 'debito' };
+      const data = { amount, categoryId: d.categoryId || FALLBACK_CAT, note: d.note.trim(), date: d.date, accountId: d.accountId || defaultAccountId() };
 
       if (item) {
         const src = ensureMonth();
@@ -1613,10 +1817,23 @@ function parseQuick(text) {
     const d = new Date(); d.setDate(d.getDate() - 1); date = isoDate(d);
   }
   const isIncome = INCOME_RE.test(rest);
-  let method = state.settings.defaultMethod || 'debito';
-  if (/\b(tarjeta de credito|con credito|a credito|credito|tc)\b/.test(rest)) method = 'credito';
-  else if (/\b(efectivo|cash)\b/.test(rest)) method = 'efectivo';
-  else if (/\b(debito|tarjeta debito)\b/.test(rest)) method = 'debito';
+  // Cuenta: por nombre ("nequi", "bancolombia") o por tipo ("crédito", "efectivo", "débito")
+  let accountId = null;
+  const GENERIC = ['tarjeta', 'credito', 'debito', 'banco', 'cuenta', 'efectivo', 'de', 'del'];
+  const restWords = rest.split(/\s+/);
+  for (const a of state.accounts) {
+    const tokens = normalizeText(a.name).split(/\s+/).filter(w => w.length > 1 && !GENERIC.includes(w));
+    const hit = tokens.find(w => restWords.includes(w));
+    if (hit) { accountId = a.id; rest = rest.replace(new RegExp(`\\b${hit}\\b`, 'g'), ' '); break; }
+  }
+  const byType = type => state.accounts.find(a => a.type === type)?.id;
+  if (!accountId) {
+    if (/\b(tarjeta de credito|con credito|a credito|credito|tc)\b/.test(rest)) accountId = byType('credito');
+    else if (/\b(efectivo|cash)\b/.test(rest)) accountId = byType('efectivo');
+    else if (/\b(debito|tarjeta debito)\b/.test(rest)) accountId = byType('debito');
+  }
+  if (isIncome && accountById(accountId)?.type === 'credito') accountId = null;
+  accountId = accountId || defaultAccountId();
   rest = rest.replace(/\b(con )?(la )?(tarjeta( de)? )?(credito|debito)\b|\b(en |con )?efectivo\b|\btc\b/g, ' ');
 
   rest = rest.replace(/\b(anteayer|ayer|hoy|pesos|en|de|del|por|un|una|el|la|los|las|gaste|pague|compre|me gaste|gasto|fue|para)\b/g, ' ')
@@ -1637,7 +1854,16 @@ function parseQuick(text) {
     .replace(/\b(anteayer|ayer|hoy|pesos)\b/gi, ' ').replace(/\s+/g, ' ').trim();
   note = note ? capitalize(note) : '';
   note = note.replace(/\b(con |en |a )?(la )?(tarjeta( de)? )?(crédito|credito|débito|debito)\b|\b(en |con )?efectivo\b/gi, ' ').replace(/\s+/g, ' ').trim();
-  return { amount: Math.round(amount * 100) / 100, categoryId, note, date, isIncome, method };
+  if (accountId) {
+    const acc = accountById(accountId);
+    for (const w of normalizeText(acc.name).split(/\s+/).filter(x => x.length > 1 && !GENERIC.includes(x))) {
+      note = note.split(/\s+/).filter(x => normalizeText(x) !== w).join(' ');
+    }
+    note = note.replace(/\s*\b(con|en|a|de|por)(\s+(la|el|mi|mis))?\s*$/i, '').trim();
+  }
+  note = note.replace(/\s+/g, ' ').trim();
+  note = note ? capitalize(note) : '';
+  return { amount: Math.round(amount * 100) / 100, categoryId, note, date, isIncome, accountId };
 }
 
 function quickEntry(text) {
@@ -1648,20 +1874,21 @@ function quickEntry(text) {
   }
   const key = r.date.slice(0, 7);
   if (r.isIncome) {
-    const item = { id: uid(), name: r.note || 'Ingreso', amount: r.amount };
+    const item = { id: uid(), name: r.note || 'Ingreso', amount: r.amount, accountId: r.accountId };
     getMonth(key, true).incomes.push(item);
     saveState();
     render();
-    toast(`💰 Ingreso: ${money(r.amount)}${r.note ? ' · ' + r.note : ''}`, [
+    toast(`💰 Ingreso: ${money(r.amount)} → ${accountById(r.accountId).name}${r.note ? ' · ' + r.note : ''}`, [
       { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.incomes = m.incomes.filter(i => i !== item); saveState(); render(); } },
     ]);
   } else {
-    const item = { id: uid(), amount: r.amount, categoryId: r.categoryId, note: r.note, date: r.date, method: r.method, plannedId: null, createdAt: Date.now() };
+    const item = { id: uid(), amount: r.amount, categoryId: r.categoryId, note: r.note, date: r.date, accountId: r.accountId, plannedId: null, createdAt: Date.now() };
     getMonth(key, true).expenses.push(item);
     saveState();
     render();
     const c = catById(r.categoryId);
-    toast(`${c.emoji} ${c.name}: ${money(r.amount)}${r.method === 'credito' ? ' 💳' : r.method === 'efectivo' ? ' 💵' : ''}${r.note ? ' · ' + r.note : ''}`, [
+    const acc = accountById(r.accountId);
+    toast(`${c.emoji} ${c.name}: ${money(r.amount)} · ${ACCOUNT_TYPES[acc.type].icon} ${acc.name}${r.note ? ' · ' + r.note : ''}`, [
       { label: 'Editar', onClick: () => { currentMonth = key; render(); expenseForm(item); } },
       { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.expenses = m.expenses.filter(e => e !== item); saveState(); render(); } },
     ]);
@@ -2145,7 +2372,7 @@ function fuelForm(item) {
   if (!state.vehicles.length) return vehicleForm(null);
   const vid = item?.vehicleId || currentVehicle || state.vehicles[0].id;
   const prev = fuelOf(vid).filter(f => !item || f.id !== item.id).pop();
-  const v = item || { date: todayIso(), km: '', gallons: '', total: '', full: true, method: state.settings.defaultMethod || 'debito' };
+  const v = item || { date: todayIso(), km: '', gallons: '', total: '', full: true, accountId: defaultAccountId() };
   openSheet({
     title: item ? 'Editar tanqueo' : '⛽ Nuevo tanqueo',
     body: (state.vehicles.length > 1 ? `<div class="field"><span class="field-label">Vehículo</span><div class="seg-pick">` +
@@ -2161,7 +2388,7 @@ function fuelForm(item) {
       `</div>` +
       `<label class="switch-row">⛽ Tanque lleno<input type="checkbox" name="full"${v.full ? ' checked' : ''}></label>` +
       `<p class="muted small" style="margin:-6px 0 12px">Para calcular bien el consumo, llena el tanque siempre que puedas y marca esta casilla.</p>` +
-      methodPicker(v.method) +
+      accountPicker(v.accountId) +
       (item ? '' : `<label class="switch-row">💰 Registrar en Finanzas como gasto<input type="checkbox" name="toExpense" checked></label>`),
     saveLabel: item ? 'Guardar' : 'Registrar tanqueo',
     onSubmit: d => {
@@ -2172,17 +2399,17 @@ function fuelForm(item) {
       const others = fuelOf(d.vehicleId).filter(f => !item || f.id !== item.id);
       const before = others.filter(f => f.date <= d.date).pop();
       if (before && km <= before.km) return toast(`El kilometraje debe ser mayor a ${before.km.toLocaleString('es-CO')}`), false;
-      const data = { vehicleId: d.vehicleId, date: d.date, km, gallons, total, full: !!d.full, method: d.method || 'debito' };
+      const data = { vehicleId: d.vehicleId, date: d.date, km, gallons, total, full: !!d.full, accountId: d.accountId || defaultAccountId() };
       const veh = vehicleById(d.vehicleId);
       let f = item;
       if (f) {
         Object.assign(f, data);
         const exp = findExpense(f.expenseId);
-        if (exp) Object.assign(exp.e, { amount: total, date: d.date, method: data.method, note: `Tanqueo ${veh.name}` });
+        if (exp) Object.assign(exp.e, { amount: total, date: d.date, accountId: data.accountId, note: `Tanqueo ${veh.name}` });
       } else {
         f = { id: uid(), ...data, expenseId: null };
         if (d.toExpense) {
-          const e = { id: uid(), amount: total, categoryId: 'transporte', note: `Tanqueo ${veh.name}`, date: d.date, method: data.method, plannedId: null, createdAt: Date.now() };
+          const e = { id: uid(), amount: total, categoryId: 'transporte', note: `Tanqueo ${veh.name}`, date: d.date, accountId: data.accountId, plannedId: null, createdAt: Date.now() };
           getMonth(d.date.slice(0, 7), true).expenses.push(e);
           f.expenseId = e.id;
         }
@@ -2253,7 +2480,7 @@ function renderVehicles() {
         <span class="ico" style="--c:var(--accent)">⛽</span>
         <div class="item-main" data-action="edit-fuel" data-id="${esc(f.id)}">
           <div class="item-title">${esc(capitalize(formatDate(f.date)))} · ${n(f.km)} km</div>
-          <div class="item-sub">${n(f.gallons)} gal${f.full ? ' · lleno' : ' · parcial'}${p ? ` · <span class="status ok">${n(p.km)} km · ${n(p.kmGal)} km/gal</span>` : ''} ${methodIcon(f.method)}</div>
+          <div class="item-sub">${n(f.gallons)} gal${f.full ? ' · lleno' : ' · parcial'}${p ? ` · <span class="status ok">${n(p.km)} km · ${n(p.kmGal)} km/gal</span>` : ''} ${accountTag(f)}</div>
         </div>
         <span class="amount">${money(f.total)}</span>
       </li>`;
@@ -2378,6 +2605,9 @@ document.addEventListener('click', e => {
     case 'add-fuel': return fuelForm(null);
     case 'edit-fuel': return fuelForm(state.fuel.find(x => x.id === id));
     case 'pay-card': return payCardForm();
+    case 'add-account': return accountForm(null);
+    case 'open-account': return accountSheet(accountById(id));
+    case 'transfer': return transferForm();
     case 'add-doc': return docForm(null, { vehicleId: el.dataset.vehicleDoc || currentVehicle, type: el.dataset.type || 'soat' });
     case 'edit-doc': return docForm(state.utils.docs.find(x => x.id === id));
 
@@ -2430,8 +2660,8 @@ $('#profileName').addEventListener('input', e => {
   renderHeader();
 });
 
-$('#defaultMethod').addEventListener('change', e => {
-  state.settings.defaultMethod = e.target.value;
+$('#defaultAccount').addEventListener('change', e => {
+  state.settings.defaultAccount = e.target.value;
   saveState();
 });
 
@@ -2499,9 +2729,9 @@ $('#exportCsv').addEventListener('click', () => {
   const m = getMonth();
   if (!m.expenses.length) return toast('No hay gastos este mes');
   const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const rows = [['Fecha', 'Categoría', 'Descripción', 'Monto', 'Tipo', 'Forma de pago']]
+  const rows = [['Fecha', 'Categoría', 'Descripción', 'Monto', 'Tipo', 'Cuenta']]
     .concat([...m.expenses].sort((a, b) => a.date.localeCompare(b.date)).map(e =>
-      [e.date, catById(e.categoryId).name, e.note, e.amount.toFixed(2), e.plannedId ? 'Fijo' : 'Adicional', METHODS.find(x => x[0] === methodOf(e))[2]]));
+      [e.date, catById(e.categoryId).name, e.note, e.amount.toFixed(2), e.plannedId ? 'Fijo' : 'Adicional', accountOf(e)?.name || '']));
   download(`gastos-${currentMonth}.csv`, '﻿' + rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');
 });
 
