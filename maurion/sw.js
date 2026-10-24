@@ -1,5 +1,5 @@
 // Cache de la app para que funcione sin internet.
-const CACHE = 'maurion-v9';
+const CACHE = 'maurion-v10';
 const ASSETS = [
   './',
   './index.html',

@@ -825,27 +825,17 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 .tile-wide .tile-ico { margin: 0; }
 .tile-wide-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
-.weather { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
-.w-icon { font-size: 3rem; }
-.w-temp { font-size: 2rem; }
-.w-hint { margin: 10px 0 0; font-weight: 600; font-size: 0.9rem; }
 
-.pyp { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 16px; margin-top: 8px; }
-.pyp.on { background: color-mix(in srgb, var(--expense) 16%, transparent); }
-.pyp.off { background: color-mix(in srgb, var(--income) 14%, transparent); }
-.pyp-icon { font-size: 1.8rem; }
-.seg-pick.days label { flex: 1 0 28%; }
-
-.result-box {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 14px; border-radius: 16px;
-  background: var(--surface-2);
-  text-align: center;
-}
-.result-box strong { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
-.result-box strong small { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
-.conv { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
-.conv .field { margin-bottom: 10px; }
-.conv select, .conv input { padding: 10px 8px; font-size: 16px; }
-.trm { margin-top: 6px; }
-.trm strong { font-size: 1.6rem; margin-right: 8px; font-variant-numeric: tabular-nums; }
+/* ===================== Formas de pago y vehículos ===================== */
+.method { font-size: 0.85rem; }
+.amount.credit { color: var(--muted); }
+.card-credit { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.card-credit .card-head > div { display: flex; flex-direction: column; gap: 2px; }
+.credit-debt { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.section-title { font-size: 1.05rem; margin: 4px 4px -4px; }
+.veh-box { display: flex; flex-direction: column; gap: 14px; }
+.veh-card h2 { font-size: 1.1rem; }
+.veh-big { display: flex; align-items: center; gap: 12px; margin: 12px 0 14px; }
+.veh-big strong { font-size: 3rem; line-height: 1; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; font-variant-numeric: tabular-nums; }
+.veh-big span { font-weight: 700; color: var(--muted); line-height: 1.2; }
+.veh-big small { font-weight: 500; }

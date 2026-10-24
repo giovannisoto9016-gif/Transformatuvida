@@ -100,8 +100,8 @@
           <small>notas</small>
         </button>
         <button class="tile tile-wide" data-goto="utilidades">
-          <span class="tile-ico">🧰</span>
-          <span class="tile-wide-text"><span class="tile-name">Utilidades</span><small>Clima · Pico y placa · Vencimientos · Dividir cuenta · Dólar</small></span>
+          <span class="tile-ico">🚗</span>
+          <span class="tile-wide-text"><span class="tile-name">Vehículos y vencimientos</span><small>Vehículos y tanqueos · Vencimientos</small></span>
           <span class="muted">›</span>
         </button>
       </div>
@@ -162,6 +162,17 @@
           </div>
           <div class="hero-bar"><div id="heroBar"></div></div>
           <span class="hero-note" id="heroNote"></span>
+        </div>
+
+        <div class="card card-credit" id="cardBox" hidden>
+          <div class="card-head">
+            <div>
+              <span class="muted small">💳 Tarjeta de crédito · debes</span>
+              <strong class="credit-debt" id="cardDebt">$0</strong>
+              <span class="muted small" id="cardMonth"></span>
+            </div>
+            <button class="pay-btn" data-action="pay-card">Pagar</button>
+          </div>
         </div>
 
         <div class="card" id="remindersCard">
@@ -282,21 +293,8 @@
     <section class="view" id="view-utilidades">
       <button class="back" data-goto="hub">‹ Inicio</button>
 
-      <div class="card">
-        <div class="card-head">
-          <h2>🌤️ Clima</h2>
-          <button class="chip-btn" data-action="pick-city" id="cityBtn">Elegir ciudad</button>
-        </div>
-        <div id="weatherBox"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <h2>🚗 Pico y placa</h2>
-          <button class="chip-btn" data-action="pyp-setup">Configurar</button>
-        </div>
-        <div id="pypBox"></div>
-      </div>
+      <h2 class="section-title">🚗 Vehículos</h2>
+      <div id="vehBox" class="veh-box"></div>
 
       <div class="card">
         <div class="card-head">
@@ -305,42 +303,6 @@
         </div>
         <p class="muted small">SOAT, tecnomecánica, licencia, pasaporte… Te avisamos antes de que se venzan.</p>
         <ul class="list" id="docList"></ul>
-      </div>
-
-      <div class="card">
-        <h2>🍽️ Dividir cuenta</h2>
-        <div class="field-row mt">
-          <div class="field"><label for="splitTotal">Total de la cuenta</label><input id="splitTotal" inputmode="decimal" placeholder="$ 0"></div>
-          <div class="field"><label for="splitPeople">Personas</label><input id="splitPeople" type="number" min="1" inputmode="numeric" value="2"></div>
-        </div>
-        <div class="field">
-          <span class="field-label">Propina</span>
-          <div class="seg-pick" id="splitTip">
-            <label><input type="radio" name="tip" value="0">0%</label>
-            <label><input type="radio" name="tip" value="10" checked>10%</label>
-            <label><input type="radio" name="tip" value="15">15%</label>
-          </div>
-        </div>
-        <label class="switch-row">Redondear a los $1.000<input type="checkbox" id="splitRound" checked></label>
-        <div class="result-box" id="splitResult"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-head">
-          <h2>💵 Dólar hoy (TRM)</h2>
-          <button class="chip-btn" data-action="refresh-trm">Actualizar</button>
-        </div>
-        <div id="trmBox"></div>
-        <div class="conv">
-          <div class="field"><label for="convAmount">Valor</label><input id="convAmount" inputmode="decimal" placeholder="100"></div>
-          <div class="field"><label for="convFrom">De</label>
-            <select id="convFrom"><option value="USD">🇺🇸 USD</option><option value="EUR">🇪🇺 EUR</option><option value="COP">🇨🇴 COP</option></select>
-          </div>
-          <div class="field"><label for="convTo">A</label>
-            <select id="convTo"><option value="COP">🇨🇴 COP</option><option value="USD">🇺🇸 USD</option><option value="EUR">🇪🇺 EUR</option></select>
-          </div>
-        </div>
-        <div class="result-box" id="convResult"></div>
       </div>
     </section>
 
@@ -397,6 +359,16 @@
         <h2>🔴 Número en el ícono</h2>
         <p class="muted small">Muestra en el ícono de MAURION cuántos pagos, tareas y recordatorios urgentes tienes (como los mensajes sin leer). Funciona con la app agregada a la pantalla de inicio y pide permiso de notificaciones.</p>
         <button class="btn soft full" id="badgeBtn" data-action="enable-badge">Activar número en el ícono</button>
+      </div>
+
+      <div class="card">
+        <h2>Forma de pago por defecto</h2>
+        <p class="muted small">La que aparece seleccionada al registrar un gasto. Efectivo y débito descuentan de tu dinero; crédito se suma a la deuda de la tarjeta.</p>
+        <select id="defaultMethod" class="mt">
+          <option value="debito">🏦 Débito</option>
+          <option value="efectivo">💵 Efectivo</option>
+          <option value="credito">💳 Crédito</option>
+        </select>
       </div>
 
       <div class="card">

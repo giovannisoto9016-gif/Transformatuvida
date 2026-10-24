@@ -59,7 +59,9 @@ function defaultState() {
     tasks: [],
     reminders: [],
     notes: [],
-    utils: { city: null, pyp: null, docs: [] },
+    utils: { docs: [] },
+    vehicles: [],
+    fuel: [],
     settings: { outlook: 'personal', rollover: true, badge: false },
     security: { pinHash: null, salt: null, credId: null, lockAfter: 1 },
   };
@@ -98,7 +100,9 @@ function normalizeState(s) {
   s.tasks = Array.isArray(s.tasks) ? s.tasks : [];
   s.reminders = Array.isArray(s.reminders) ? s.reminders : [];
   s.notes = Array.isArray(s.notes) ? s.notes : [];
-  s.utils = { city: null, pyp: null, docs: [], ...(s.utils || {}) };
+  s.utils = { docs: Array.isArray(s.utils?.docs) ? s.utils.docs : [] };
+  s.vehicles = Array.isArray(s.vehicles) ? s.vehicles : [];
+  s.fuel = Array.isArray(s.fuel) ? s.fuel : [];
   s.settings = { outlook: 'personal', rollover: true, badge: false, ...(s.settings || {}) };
   s.security = { pinHash: null, salt: null, credId: null, lockAfter: 1, ...(s.security || {}) };
   s.version = 3;
@@ -276,7 +280,7 @@ function carryInfo(key) {
   const prevKey = shiftMonth(key, -1);
   const first = Object.keys(state.months).filter(k => hasData(state.months[k])).sort()[0];
   if (!first || prevKey < first) return null;
-  const auto = Math.round((incomeTotal(prevKey) - sum(getMonth(prevKey).expenses)) * 100) / 100;
+  const auto = Math.round((incomeTotal(prevKey) - sum(getMonth(prevKey).expenses.filter(isCash))) * 100) / 100;
   const manual = ov && ov.amount != null;
   const amount = manual ? ov.amount : auto;
   if (!amount && !manual) return null;
@@ -293,24 +297,85 @@ function monthName(key) {
   return new Date(y, mo - 1, 1).toLocaleDateString('es', { month: 'long' });
 }
 
+/* ----- Formas de pago ----- */
+
+const METHODS = [['efectivo', '💵', 'Efectivo'], ['debito', '🏦', 'Débito'], ['credito', '💳', 'Crédito']];
+
+function methodOf(e) {
+  return e.method || 'debito';
+}
+
+// Efectivo y débito salen de tu dinero; lo de crédito queda como deuda de la tarjeta.
+function isCash(e) {
+  return methodOf(e) !== 'credito';
+}
+
+function methodIcon(m) {
+  const x = METHODS.find(y => y[0] === (m || 'debito'));
+  return `<span class="method" title="${x[2]}">${x[1]}</span>`;
+}
+
+function methodPicker(selected, onlyCash) {
+  return `<div class="field"><span class="field-label">Forma de pago</span><div class="seg-pick">` +
+    METHODS.filter(m => !onlyCash || m[0] !== 'credito').map(([v, ic, l]) =>
+      `<label><input type="radio" name="method" value="${v}"${(selected || state.settings.defaultMethod || 'debito') === v ? ' checked' : ''}>${ic} ${l}</label>`).join('') +
+    `</div></div>`;
+}
+
+// Deuda de la tarjeta: compras con crédito menos los pagos a la tarjeta.
+function cardDebt() {
+  let debt = 0;
+  for (const m of Object.values(state.months)) {
+    for (const e of m.expenses) {
+      if (!isCash(e)) debt += e.amount;
+      if (e.cardPayment) debt -= e.amount;
+    }
+  }
+  return Math.round(debt * 100) / 100;
+}
+
+function payCardForm() {
+  const debt = cardDebt();
+  openSheet({
+    title: '💳 Pagar tarjeta de crédito',
+    body: amountInput(debt > 0 ? debt : null) +
+      `<p class="muted small" style="text-align:center;margin:-6px 0 14px">Debes ${money(debt)}. Puedes pagar todo o una parte.</p>` +
+      methodPicker('debito', true) +
+      field('Fecha', `<input name="date" type="date" required value="${esc(defaultDateForMonth())}">`),
+    saveLabel: 'Registrar pago',
+    onSubmit: d => {
+      const amount = parseAmount(d.amount);
+      if (!amount) return toast('Escribe un monto válido'), false;
+      getMonth(d.date.slice(0, 7), true).expenses.push({
+        id: uid(), amount, categoryId: 'deudas', note: 'Pago tarjeta de crédito', date: d.date,
+        method: d.method || 'debito', cardPayment: true, plannedId: null, createdAt: Date.now(),
+      });
+      toast('Pago de tarjeta registrado 💳');
+    },
+  });
+}
+
 function totals(m, key = currentMonth) {
   const income = incomeTotal(key);
   const planned = sum(m.planned);
-  const spent = sum(m.expenses);
+  const cash = m.expenses.filter(isCash);
+  const spent = sum(cash);
+  const credit = sum(m.expenses.filter(e => !isCash(e)));
   const pending = sum(m.planned.filter(p => !p.paidExpenseId));
-  const extras = sum(m.expenses.filter(e => !e.plannedId));
-  // Cada categoría compromete lo proyectado, o lo gastado si ya se pasó del presupuesto.
+  const extras = sum(cash.filter(e => !e.plannedId));
+  // Cada categoría compromete lo proyectado, o lo pagado (efectivo/débito) si ya se pasó del presupuesto.
   const committed = state.categories.reduce((acc, c) => {
     const p = sum(m.planned.filter(x => x.categoryId === c.id));
-    const g = sum(m.expenses.filter(x => catById(x.categoryId).id === c.id));
+    const g = sum(cash.filter(x => catById(x.categoryId).id === c.id));
     return acc + Math.max(p, g);
   }, 0);
-  return { income, planned, spent, pending, extras, available: income - committed };
+  return { income, planned, spent, credit, pending, extras, available: income - committed };
 }
 
+// Consumo por categoría (incluye compras con crédito; no cuenta los pagos de la tarjeta para no duplicar).
 function spentByCategory(m) {
   return state.categories
-    .map(c => ({ c, spent: sum(m.expenses.filter(e => catById(e.categoryId).id === c.id)) }))
+    .map(c => ({ c, spent: sum(m.expenses.filter(e => !e.cardPayment && catById(e.categoryId).id === c.id)) }))
     .filter(r => r.spent > 0)
     .sort((a, b) => b.spent - a.spent);
 }
@@ -413,6 +478,12 @@ function renderInicio() {
       ? `⚠️ Tu plan supera tus ingresos por ${money(-t.available)}.`
       : `Has usado el ${pct}% de tus ingresos · Por pagar: ${money(t.pending)}`;
 
+  // Tarjeta de crédito
+  const debt = cardDebt();
+  $('#cardBox').hidden = !(debt > 0 || t.credit > 0);
+  $('#cardDebt').textContent = money(debt);
+  $('#cardMonth').textContent = t.credit ? `Compras con crédito este mes: ${money(t.credit)}` : 'Sin compras con crédito este mes';
+
   // Recordatorios: pagos pendientes ordenados por urgencia
   const pending = sortPlanned(m.planned.filter(p => !p.paidExpenseId), currentMonth).slice(0, 4);
   $('#remindersCard').hidden = m.planned.length === 0;
@@ -475,9 +546,9 @@ function expenseItem(e) {
     ${catIcon(c)}
     <div class="item-main" data-action="edit-expense" data-id="${esc(e.id)}">
       <div class="item-title">${esc(e.note || c.name)}</div>
-      <div class="item-sub">${esc(c.name)} · ${esc(formatDate(e.date))}${e.plannedId ? '<span class="tag">fijo</span>' : ''}</div>
+      <div class="item-sub">${methodIcon(e.method)} ${esc(c.name)} · ${esc(formatDate(e.date))}${e.plannedId ? '<span class="tag">fijo</span>' : ''}${isCash(e) ? '' : '<span class="tag">a crédito</span>'}</div>
     </div>
-    <span class="amount neg">−${money(e.amount)}</span>
+    <span class="amount ${isCash(e) ? 'neg' : 'credit'}">−${money(e.amount)}</span>
   </li>`;
 }
 
@@ -529,7 +600,7 @@ function renderPresupuesto() {
 function renderGastos() {
   const m = getMonth();
   const used = new Set(m.expenses.map(e => catById(e.categoryId).id));
-  const chips = [{ id: 'all', label: 'Todos' }, { id: 'extras', label: '✨ Adicionales' }]
+  const chips = [{ id: 'all', label: 'Todos' }, { id: 'extras', label: '✨ Adicionales' }, { id: 'credito', label: '💳 Crédito' }, { id: 'efectivo', label: '💵 Efectivo' }]
     .concat(state.categories.filter(c => used.has(c.id)).map(c => ({ id: c.id, label: `${c.emoji} ${c.name}` })));
   if (!chips.some(c => c.id === expenseFilter)) expenseFilter = 'all';
   $('#filterChips').innerHTML = chips.map(c =>
@@ -537,6 +608,7 @@ function renderGastos() {
 
   let list = [...m.expenses];
   if (expenseFilter === 'extras') list = list.filter(e => !e.plannedId);
+  else if (expenseFilter === 'credito' || expenseFilter === 'efectivo') list = list.filter(e => methodOf(e) === expenseFilter);
   else if (expenseFilter !== 'all') list = list.filter(e => catById(e.categoryId).id === expenseFilter);
   list.sort(byDateDesc);
 
@@ -576,7 +648,7 @@ function renderAnalisis() {
   const months = Array.from({ length: 6 }, (_, i) => shiftMonth(currentMonth, i - 5));
   const data = months.map(k => {
     const mm = getMonth(k);
-    return { k, income: Math.max(0, incomeTotal(k)), spent: sum(mm.expenses) };
+    return { k, income: Math.max(0, incomeTotal(k)), spent: sum(mm.expenses.filter(isCash)) };
   });
   const max = Math.max(1, ...data.map(d => Math.max(d.income, d.spent)));
   $('#monthBars').innerHTML = data.map(d => {
@@ -612,6 +684,7 @@ function renderAnalisis() {
 
 function renderAjustes() {
   $('#outlookType').value = state.settings.outlook;
+  $('#defaultMethod').value = state.settings.defaultMethod || 'debito';
   const nameInput = $('#profileName');
   if (document.activeElement !== nameInput) nameInput.value = state.profile.name || '';
 
@@ -812,7 +885,7 @@ function togglePaid(id) {
     if (!todayIso().startsWith(currentMonth) && p.dueDay) {
       date = currentMonth + '-' + String(Math.min(p.dueDay, daysInMonth(currentMonth))).padStart(2, '0');
     }
-    const exp = { id: uid(), date, amount: p.amount, categoryId: p.categoryId, note: p.name, plannedId: p.id, createdAt: Date.now() };
+    const exp = { id: uid(), date, amount: p.amount, categoryId: p.categoryId, note: p.name, method: state.settings.defaultMethod || 'debito', plannedId: p.id, createdAt: Date.now() };
     m.expenses.push(exp);
     p.paidExpenseId = exp.id;
     toast('¡Pagado! ✅');
@@ -831,6 +904,7 @@ function expenseForm(item) {
     title: item ? 'Editar gasto' : 'Nuevo gasto',
     body: amountInput(item?.amount) +
       catPicker(item?.categoryId || 'mercado') +
+      methodPicker(item?.method) +
       field('Descripción', `<input name="note" maxlength="80" placeholder="¿En qué gastaste?" value="${esc(item?.note || '')}">`) +
       field('Fecha', `<input name="date" type="date" required value="${esc(item?.date || defaultDateForMonth())}">`) +
       (linked ? `<p class="muted small">Este es el pago de tu gasto fijo “${esc(linked.name)}”.</p>` : ''),
@@ -840,7 +914,7 @@ function expenseForm(item) {
       if (!amount) return toast('Escribe un monto válido'), false;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) return toast('Elige una fecha'), false;
       const targetKey = d.date.slice(0, 7);
-      const data = { amount, categoryId: d.categoryId || FALLBACK_CAT, note: d.note.trim(), date: d.date };
+      const data = { amount, categoryId: d.categoryId || FALLBACK_CAT, note: d.note.trim(), date: d.date, method: d.method || 'debito' };
 
       if (item) {
         const src = ensureMonth();
@@ -1387,8 +1461,7 @@ function agendaUrgentCount() {
 }
 
 function renderHub() {
-  const holiday = isHoliday(new Date()) ? ' · 🇨🇴 Festivo' : '';
-  $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })) + holiday;
+  $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }));
   renderDayStrip();
 
   const realMonth = monthKey(new Date());
@@ -1438,6 +1511,7 @@ function fabAction() {
   if (currentView === 'finanzas') return expenseForm(null);
   if (currentView === 'agenda') return agendaSub === 'tareas' ? taskForm(null) : reminderForm(null);
   if (currentView === 'notas') return noteForm(null);
+  if (currentView === 'utilidades') return fuelForm(null);
   const opts = [['gasto', '🧾', 'Gasto'], ['tarea', '✅', 'Tarea'], ['recordatorio', '🔔', 'Recordatorio'], ['nota', '📝', 'Nota']];
   openSheet({
     title: '¿Qué quieres agregar?',
@@ -1539,6 +1613,11 @@ function parseQuick(text) {
     const d = new Date(); d.setDate(d.getDate() - 1); date = isoDate(d);
   }
   const isIncome = INCOME_RE.test(rest);
+  let method = state.settings.defaultMethod || 'debito';
+  if (/\b(tarjeta de credito|con credito|a credito|credito|tc)\b/.test(rest)) method = 'credito';
+  else if (/\b(efectivo|cash)\b/.test(rest)) method = 'efectivo';
+  else if (/\b(debito|tarjeta debito)\b/.test(rest)) method = 'debito';
+  rest = rest.replace(/\b(con )?(la )?(tarjeta( de)? )?(credito|debito)\b|\b(en |con )?efectivo\b|\btc\b/g, ' ');
 
   rest = rest.replace(/\b(anteayer|ayer|hoy|pesos|en|de|del|por|un|una|el|la|los|las|gaste|pague|compre|me gaste|gasto|fue|para)\b/g, ' ')
     .replace(/\s+/g, ' ').trim();
@@ -1557,7 +1636,8 @@ function parseQuick(text) {
     .replace(new RegExp(`\\b(?:(?:${Object.keys(WORD_NUMBERS).join('|')})\\s+)+(?:mil|millones|millón|millon|palos?|lucas?)\\b`, 'gi'), ' ')
     .replace(/\b(anteayer|ayer|hoy|pesos)\b/gi, ' ').replace(/\s+/g, ' ').trim();
   note = note ? capitalize(note) : '';
-  return { amount: Math.round(amount * 100) / 100, categoryId, note, date, isIncome };
+  note = note.replace(/\b(con |en |a )?(la )?(tarjeta( de)? )?(crédito|credito|débito|debito)\b|\b(en |con )?efectivo\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  return { amount: Math.round(amount * 100) / 100, categoryId, note, date, isIncome, method };
 }
 
 function quickEntry(text) {
@@ -1576,12 +1656,12 @@ function quickEntry(text) {
       { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.incomes = m.incomes.filter(i => i !== item); saveState(); render(); } },
     ]);
   } else {
-    const item = { id: uid(), amount: r.amount, categoryId: r.categoryId, note: r.note, date: r.date, plannedId: null, createdAt: Date.now() };
+    const item = { id: uid(), amount: r.amount, categoryId: r.categoryId, note: r.note, date: r.date, method: r.method, plannedId: null, createdAt: Date.now() };
     getMonth(key, true).expenses.push(item);
     saveState();
     render();
     const c = catById(r.categoryId);
-    toast(`${c.emoji} ${c.name}: ${money(r.amount)}${r.note ? ' · ' + r.note : ''}`, [
+    toast(`${c.emoji} ${c.name}: ${money(r.amount)}${r.method === 'credito' ? ' 💳' : r.method === 'efectivo' ? ' 💵' : ''}${r.note ? ' · ' + r.note : ''}`, [
       { label: 'Editar', onClick: () => { currentMonth = key; render(); expenseForm(item); } },
       { label: 'Deshacer', onClick: () => { const m = getMonth(key); m.expenses = m.expenses.filter(e => e !== item); saveState(); render(); } },
     ]);
@@ -1851,197 +1931,7 @@ $('#rollover').addEventListener('change', e => {
   render();
 });
 
-/* ===================== Utilidades ===================== */
-
-const CITIES = [
-  ['Bogotá', 4.711, -74.0721], ['Medellín', 6.2442, -75.5812], ['Cali', 3.4516, -76.532],
-  ['Barranquilla', 10.9685, -74.7813], ['Cartagena', 10.391, -75.4794], ['Bucaramanga', 7.1193, -73.1227],
-  ['Pereira', 4.8133, -75.6961], ['Manizales', 5.0703, -75.5138], ['Armenia', 4.5339, -75.6811],
-  ['Cúcuta', 7.8939, -72.5078], ['Ibagué', 4.4389, -75.2322], ['Santa Marta', 11.2408, -74.199],
-  ['Villavicencio', 4.142, -73.6266], ['Pasto', 1.2136, -77.2811], ['Neiva', 2.9273, -75.2819],
-  ['Popayán', 2.4448, -76.6147], ['Palmira', 3.5394, -76.3036], ['Tuluá', 4.0847, -76.1954],
-  ['Buenaventura', 3.8801, -77.0312], ['Jamundí', 3.2610, -76.5390],
-];
-
-/* ----- Festivos de Colombia (Ley Emiliani) ----- */
-
-function easterSunday(y) {
-  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
-  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(y, month - 1, day);
-}
-
-const holidayCache = {};
-function colombianHolidays(y) {
-  if (holidayCache[y]) return holidayCache[y];
-  const set = new Set();
-  const add = d => set.add(isoDate(d));
-  const nextMonday = d => { const r = new Date(d); while (r.getDay() !== 1) r.setDate(r.getDate() + 1); return r; };
-  [[0, 1], [4, 1], [6, 20], [7, 7], [11, 8], [11, 25]].forEach(([m, d]) => add(new Date(y, m, d)));
-  [[0, 6], [2, 19], [5, 29], [7, 15], [9, 12], [10, 1], [10, 11]].forEach(([m, d]) => add(nextMonday(new Date(y, m, d))));
-  const e = easterSunday(y);
-  const plus = n => { const r = new Date(e); r.setDate(r.getDate() + n); return r; };
-  add(plus(-3)); add(plus(-2)); add(plus(43)); add(plus(64)); add(plus(71));
-  return (holidayCache[y] = set);
-}
-
-function isHoliday(d) {
-  return colombianHolidays(d.getFullYear()).has(isoDate(d));
-}
-
-/* ----- Clima (Open-Meteo, gratis y sin cuenta) ----- */
-
-const WEATHER_KEY = 'maurion.weather';
-const WMO = [
-  [[0], '☀️', 'Despejado'], [[1, 2], '🌤️', 'Parcialmente nublado'], [[3], '☁️', 'Nublado'],
-  [[45, 48], '🌫️', 'Neblina'], [[51, 53, 55, 56, 57], '🌦️', 'Llovizna'], [[61, 63, 65, 66, 67], '🌧️', 'Lluvia'],
-  [[71, 73, 75, 77, 85, 86], '🌨️', 'Nieve'], [[80, 81, 82], '🌧️', 'Aguaceros'], [[95, 96, 99], '⛈️', 'Tormenta'],
-];
-function wmo(code) {
-  const w = WMO.find(x => x[0].includes(code));
-  return w ? { icon: w[1], text: w[2] } : { icon: '🌡️', text: '' };
-}
-
-let weather = null;
-try { weather = JSON.parse(localStorage.getItem(WEATHER_KEY)); } catch { weather = null; }
-
-async function loadWeather(force) {
-  const c = state.utils.city;
-  if (!c) return;
-  const fresh = weather && weather.city === c.name && Date.now() - weather.at < 30 * 60000;
-  if (fresh && !force) return;
-  try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}` +
-      '&current=temperature_2m,weather_code,apparent_temperature' +
-      '&hourly=precipitation_probability&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
-      '&timezone=auto&forecast_days=1';
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(r.status);
-    const j = await r.json();
-    weather = { city: c.name, at: Date.now(), data: j };
-    try { localStorage.setItem(WEATHER_KEY, JSON.stringify(weather)); } catch { /* sin espacio */ }
-    renderUtils();
-    renderHub();
-  } catch {
-    if (force) toast('No se pudo cargar el clima. Revisa tu conexión.');
-  }
-}
-
-function weatherSummary() {
-  if (!weather || !state.utils.city || weather.city !== state.utils.city.name) return null;
-  const j = weather.data;
-  const w = wmo(j.current.weather_code);
-  // Primera hora desde ahora con probabilidad de lluvia ≥ 50 %
-  const nowH = new Date().getHours();
-  let rainAt = null;
-  (j.hourly?.time || []).forEach((t, i) => {
-    const h = Number(t.slice(11, 13));
-    if (rainAt == null && h >= nowH && j.hourly.precipitation_probability[i] >= 50) rainAt = h;
-  });
-  return {
-    icon: w.icon, text: w.text,
-    temp: Math.round(j.current.temperature_2m),
-    feels: Math.round(j.current.apparent_temperature),
-    max: Math.round(j.daily.temperature_2m_max[0]),
-    min: Math.round(j.daily.temperature_2m_min[0]),
-    rain: j.daily.precipitation_probability_max[0],
-    rainAt,
-  };
-}
-
-function rainHint(w) {
-  if (w.rainAt != null) return `☂️ Lleva sombrilla: lluvia probable desde las ${timeLabel(pad2(w.rainAt) + ':00')}`;
-  if (w.rain >= 40) return `☂️ Posible lluvia hoy (${w.rain}%)`;
-  return '😎 Sin lluvia a la vista';
-}
-
-function cityPicker() {
-  openSheet({
-    title: '¿En qué ciudad estás?',
-    body: `<button type="button" class="btn soft full" data-geo style="margin-bottom:12px">📍 Usar mi ubicación actual</button>
-      <div class="ob-options">${CITIES.map(([n], i) => `<button type="button" data-city="${i}" class="${state.utils.city?.name === n ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`,
-  });
-  sheet.querySelector('#sheetBody').addEventListener('click', e => {
-    const b = e.target.closest('[data-city]');
-    if (b) {
-      const [name, lat, lon] = CITIES[b.dataset.city];
-      return setCity({ name, lat, lon });
-    }
-    if (e.target.closest('[data-geo]')) {
-      if (!navigator.geolocation) return toast('Tu celular no permite ubicación aquí');
-      navigator.geolocation.getCurrentPosition(
-        pos => setCity({ name: 'Mi ubicación', lat: +pos.coords.latitude.toFixed(3), lon: +pos.coords.longitude.toFixed(3) }),
-        () => toast('No diste permiso de ubicación. Elige tu ciudad de la lista.'),
-        { timeout: 10000 },
-      );
-    }
-  });
-}
-
-function setCity(c) {
-  state.utils.city = c;
-  saveState();
-  closeSheet();
-  render();
-  loadWeather(true);
-}
-
-/* ----- Pico y placa ----- */
-
-const WEEKDAYS = [[1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb']];
-
-function pypToday(d = new Date()) {
-  const p = state.utils.pyp;
-  if (!p) return null;
-  if (d.getDay() === 0) return { has: false, why: 'Domingo' };
-  if (isHoliday(d)) return { has: false, why: 'Festivo' };
-  let has;
-  if (p.mode === 'par') has = d.getDate() % 2 === 0;
-  else if (p.mode === 'impar') has = d.getDate() % 2 === 1;
-  else has = (p.days || []).includes(d.getDay());
-  return { has, why: '' };
-}
-
-function nextPyp() {
-  const d = new Date();
-  for (let i = 1; i <= 14; i++) {
-    d.setDate(d.getDate() + 1);
-    if (pypToday(d)?.has) return new Date(d);
-  }
-  return null;
-}
-
-function pypForm() {
-  const p = state.utils.pyp || { mode: 'semana', days: [], hours: '6:00–9:00 y 16:00–19:00', plate: '', vehicle: 'Carro' };
-  openSheet({
-    title: 'Pico y placa',
-    body: `<p class="muted small" style="margin:0 0 12px">Configúralo según la regla vigente de tu ciudad (cambia cada cierto tiempo; la puedes editar cuando quieras). Domingos y festivos no aplica.</p>` +
-      `<div class="field-row">` +
-        field('Vehículo', `<select name="vehicle">${['Carro', 'Moto', 'Taxi'].map(v => `<option${v === p.vehicle ? ' selected' : ''}>${v}</option>`).join('')}</select>`) +
-        field('Placa (opcional)', `<input name="plate" maxlength="7" placeholder="ABC123" value="${esc(p.plate)}" style="text-transform:uppercase">`) +
-      `</div>` +
-      `<div class="field"><span class="field-label">¿Cuándo tienes pico y placa?</span><div class="seg-pick">` +
-        [['semana', 'Días fijos'], ['par', 'Días pares'], ['impar', 'Días impares']].map(([v, l]) =>
-          `<label><input type="radio" name="mode" value="${v}"${p.mode === v ? ' checked' : ''}>${l}</label>`).join('') +
-      `</div></div>` +
-      `<div class="field" id="pypDays"><span class="field-label">Días de la semana</span><div class="seg-pick days">` +
-        WEEKDAYS.map(([v, l]) => `<label><input type="checkbox" name="day${v}"${(p.days || []).includes(v) ? ' checked' : ''}>${l}</label>`).join('') +
-      `</div></div>` +
-      field('Horario', `<input name="hours" maxlength="60" placeholder="6:00–9:00 y 16:00–19:00" value="${esc(p.hours)}">`),
-    extra: state.utils.pyp ? [{ label: 'Quitar pico y placa', onClick: () => { state.utils.pyp = null; saveState(); closeSheet(); render(); } }] : [],
-    onSubmit: d => {
-      const days = WEEKDAYS.map(([v]) => v).filter(v => d['day' + v]);
-      if (d.mode === 'semana' && !days.length) return toast('Elige al menos un día'), false;
-      state.utils.pyp = { mode: d.mode, days, hours: d.hours.trim(), plate: d.plate.trim().toUpperCase(), vehicle: d.vehicle };
-      toast('Pico y placa guardado 🚗');
-    },
-  });
-  const sync = () => { $('#pypDays').hidden = $('#sheetForm').mode.value !== 'semana'; };
-  sheet.querySelectorAll('[name="mode"]').forEach(r => r.addEventListener('change', sync));
-  sync();
-}
+/* ===================== Utilidades: vehículos y vencimientos ===================== */
 
 /* ----- Vencimientos de documentos ----- */
 
@@ -2109,125 +1999,209 @@ function docForm(item) {
   });
 }
 
-/* ----- Dividir cuenta ----- */
 
-function splitCalc() {
-  const total = parseAmount($('#splitTotal').value) || 0;
-  const people = Math.max(1, parseInt($('#splitPeople').value, 10) || 1);
-  const tip = Number(document.querySelector('#splitTip input:checked')?.value || 0);
-  const withTip = total * (1 + tip / 100);
-  let each = withTip / people;
-  if ($('#splitRound').checked) each = Math.ceil(each / 1000) * 1000;
-  return { total, people, tip, withTip, each };
+
+/* ----- Vehículos y tanqueos ----- */
+
+const VEHICLE_TYPES = { moto: '🏍️', carro: '🚗' };
+let currentVehicle = null;
+
+function vehicleById(id) {
+  return state.vehicles.find(v => v.id === id);
 }
 
-function renderSplit() {
-  const r = splitCalc();
-  $('#splitResult').innerHTML = r.total
-    ? `<span class="muted small">Total con propina: ${money(Math.round(r.withTip))}</span>
-       <strong>${money(Math.round(r.each))} <small>por persona</small></strong>
-       <button class="chip-btn" data-action="split-save">Registrar mi parte como gasto</button>`
-    : '<span class="muted small">Escribe el total para calcular.</span>';
+function fuelOf(vehicleId) {
+  return state.fuel.filter(f => f.vehicleId === vehicleId).sort((a, b) => a.km - b.km || a.date.localeCompare(b.date));
 }
 
-function saveSplitExpense() {
-  const r = splitCalc();
-  if (!r.total) return;
-  const item = { id: uid(), amount: Math.round(r.each), categoryId: 'comida', note: 'Cuenta dividida', date: todayIso(), plannedId: null, createdAt: Date.now() };
-  getMonth(monthKey(new Date()), true).expenses.push(item);
-  saveState();
-  render();
-  toast(`🍔 Registrado: ${money(item.amount)}`);
-}
-
-['#splitTotal', '#splitPeople', '#splitRound'].forEach(sel => $(sel).addEventListener('input', renderSplit));
-$('#splitTip').addEventListener('change', renderSplit);
-
-/* ----- Dólar (TRM oficial) y conversor ----- */
-
-const RATES_KEY = 'maurion.rates';
-let rates = null;
-try { rates = JSON.parse(localStorage.getItem(RATES_KEY)); } catch { rates = null; }
-
-async function loadRates(force) {
-  const fresh = rates && Date.now() - rates.at < 6 * 3600000;
-  if (fresh && !force) return;
-  try {
-    // TRM oficial (Superintendencia Financiera) en datos abiertos de Colombia
-    const r = await fetch('https://www.datos.gov.co/resource/32sa-8pi3.json?$limit=2&$order=vigenciadesde%20DESC');
-    if (!r.ok) throw new Error(r.status);
-    const rows = await r.json();
-    const trm = parseFloat(rows[0].valor);
-    const prev = rows[1] ? parseFloat(rows[1].valor) : null;
-    let eurUsd = rates?.eurUsd || null;
-    try {
-      // Euro: tasa de referencia del mercado (frente al dólar)
-      const fx = await (await fetch('https://open.er-api.com/v6/latest/USD')).json();
-      if (fx?.rates?.EUR) eurUsd = 1 / fx.rates.EUR;
-    } catch { /* se mantiene el último valor */ }
-    rates = { at: Date.now(), trm, prev, since: rows[0].vigenciadesde, eurUsd };
-    try { localStorage.setItem(RATES_KEY, JSON.stringify(rates)); } catch { /* sin espacio */ }
-    renderUtils();
-    if (force) toast('Dólar actualizado');
-  } catch {
-    if (force) toast('No se pudo cargar la TRM. Revisa tu conexión.');
+// Consumo por el método de tanque lleno a tanque lleno: km recorridos ÷ galones cargados entre ambos.
+function fuelStats(vehicleId) {
+  const logs = fuelOf(vehicleId);
+  const perLog = {};
+  let lastFull = null, galSince = 0, totalKm = 0, totalGal = 0;
+  for (const f of logs) {
+    if (lastFull) galSince += f.gallons;
+    if (f.full) {
+      if (lastFull && galSince > 0) {
+        const km = f.km - lastFull.km;
+        perLog[f.id] = { km, kmGal: km / galSince };
+        totalKm += km;
+        totalGal += galSince;
+      }
+      lastFull = f;
+      galSince = 0;
+    }
   }
+  const first = logs[0], last = logs[logs.length - 1];
+  const spent = sum(logs, f => f.total);
+  const distance = first && last ? last.km - first.km : 0;
+  // Costo por km: lo pagado sin contar el primer tanqueo (ese combustible se gastó antes del registro)
+  const costKm = distance > 0 ? (spent - (first?.total || 0)) / distance : null;
+  const thisMonth = monthKey(new Date());
+  return {
+    logs, perLog,
+    avg: totalGal ? totalKm / totalGal : null,
+    lastKmGal: last && perLog[last.id] ? perLog[last.id].kmGal : null,
+    lastKm: last ? last.km : null,
+    pricePerGal: last && last.gallons ? last.total / last.gallons : null,
+    costKm,
+    monthSpent: sum(logs.filter(f => f.date.startsWith(thisMonth)), f => f.total),
+    monthKm: (() => {
+      const m = logs.filter(f => f.date.startsWith(thisMonth));
+      const before = logs.filter(f => f.date < thisMonth + '-01').pop();
+      const start = before || m[0];
+      return m.length && start ? m[m.length - 1].km - start.km : 0;
+    })(),
+  };
 }
 
-function copPer(code) {
-  if (!rates) return null;
-  if (code === 'COP') return 1;
-  if (code === 'USD') return rates.trm;
-  if (code === 'EUR') return rates.eurUsd ? rates.trm * rates.eurUsd : null;
+function vehicleForm(item) {
+  const v = item || { type: 'moto', name: '', plate: '' };
+  openSheet({
+    title: item ? 'Editar vehículo' : 'Nuevo vehículo',
+    body: `<div class="field"><span class="field-label">Tipo</span><div class="seg-pick">` +
+        Object.entries(VEHICLE_TYPES).map(([k, e]) => `<label><input type="radio" name="type" value="${k}"${v.type === k ? ' checked' : ''}>${e} ${k === 'moto' ? 'Moto' : 'Carro'}</label>`).join('') +
+      `</div></div>` +
+      field('Nombre', `<input name="name" class="big-input" maxlength="40" placeholder="Ej. Pulsar 200, Mazda 3" required value="${esc(v.name)}">`) +
+      field('Placa (opcional)', `<input name="plate" maxlength="7" placeholder="ABC12D" style="text-transform:uppercase" value="${esc(v.plate)}">`),
+    onSubmit: d => {
+      const name = d.name.trim();
+      if (!name) return toast('Ponle un nombre'), false;
+      const data = { type: d.type, name, plate: d.plate.trim().toUpperCase() };
+      if (item) Object.assign(item, data);
+      else {
+        const nv = { id: uid(), ...data };
+        state.vehicles.push(nv);
+        currentVehicle = nv.id;
+      }
+      toast('Vehículo guardado');
+    },
+    onDelete: item && (() => {
+      if (!confirm(`¿Eliminar ${item.name} y todos sus tanqueos? (Los gastos ya registrados en Finanzas se conservan.)`)) return false;
+      state.vehicles = state.vehicles.filter(x => x.id !== item.id);
+      state.fuel = state.fuel.filter(f => f.vehicleId !== item.id);
+      currentVehicle = null;
+      toast('Vehículo eliminado');
+    }),
+  });
+}
+
+function fuelForm(item) {
+  if (!state.vehicles.length) return vehicleForm(null);
+  const vid = item?.vehicleId || currentVehicle || state.vehicles[0].id;
+  const prev = fuelOf(vid).filter(f => !item || f.id !== item.id).pop();
+  const v = item || { date: todayIso(), km: '', gallons: '', total: '', full: true, method: state.settings.defaultMethod || 'debito' };
+  openSheet({
+    title: item ? 'Editar tanqueo' : '⛽ Nuevo tanqueo',
+    body: (state.vehicles.length > 1 ? `<div class="field"><span class="field-label">Vehículo</span><div class="seg-pick">` +
+        state.vehicles.map(x => `<label><input type="radio" name="vehicleId" value="${esc(x.id)}"${x.id === vid ? ' checked' : ''}>${VEHICLE_TYPES[x.type]} ${esc(x.name)}</label>`).join('') +
+      `</div></div>` : `<input type="hidden" name="vehicleId" value="${esc(vid)}">`) +
+      `<div class="field-row">` +
+        field('Kilometraje (odómetro)', `<input name="km" inputmode="numeric" required placeholder="${prev ? 'Último: ' + prev.km.toLocaleString('es-CO') : 'Ej. 15230'}" value="${esc(v.km)}" autofocus>`) +
+        field('Fecha', `<input name="date" type="date" required value="${esc(v.date)}">`) +
+      `</div>` +
+      `<div class="field-row">` +
+        field('Galones', `<input name="gallons" inputmode="decimal" required placeholder="Ej. 2,8" value="${esc(v.gallons)}">`) +
+        field('Valor pagado', `<input name="total" inputmode="decimal" required placeholder="$ 0" value="${esc(v.total)}">`) +
+      `</div>` +
+      `<label class="switch-row">⛽ Tanque lleno<input type="checkbox" name="full"${v.full ? ' checked' : ''}></label>` +
+      `<p class="muted small" style="margin:-6px 0 12px">Para calcular bien el consumo, llena el tanque siempre que puedas y marca esta casilla.</p>` +
+      methodPicker(v.method) +
+      (item ? '' : `<label class="switch-row">💰 Registrar en Finanzas como gasto<input type="checkbox" name="toExpense" checked></label>`),
+    saveLabel: item ? 'Guardar' : 'Registrar tanqueo',
+    onSubmit: d => {
+      const km = parseInt(String(d.km).replace(/\D/g, ''), 10);
+      const gallons = parseFloat(String(d.gallons).replace(',', '.'));
+      const total = parseAmount(d.total);
+      if (!km || !(gallons > 0) || !total) return toast('Completa kilometraje, galones y valor'), false;
+      const others = fuelOf(d.vehicleId).filter(f => !item || f.id !== item.id);
+      const before = others.filter(f => f.date <= d.date).pop();
+      if (before && km <= before.km) return toast(`El kilometraje debe ser mayor a ${before.km.toLocaleString('es-CO')}`), false;
+      const data = { vehicleId: d.vehicleId, date: d.date, km, gallons, total, full: !!d.full, method: d.method || 'debito' };
+      const veh = vehicleById(d.vehicleId);
+      let f = item;
+      if (f) {
+        Object.assign(f, data);
+        const exp = findExpense(f.expenseId);
+        if (exp) Object.assign(exp.e, { amount: total, date: d.date, method: data.method, note: `Tanqueo ${veh.name}` });
+      } else {
+        f = { id: uid(), ...data, expenseId: null };
+        if (d.toExpense) {
+          const e = { id: uid(), amount: total, categoryId: 'transporte', note: `Tanqueo ${veh.name}`, date: d.date, method: data.method, plannedId: null, createdAt: Date.now() };
+          getMonth(d.date.slice(0, 7), true).expenses.push(e);
+          f.expenseId = e.id;
+        }
+        state.fuel.push(f);
+      }
+      currentVehicle = d.vehicleId;
+      const st = fuelStats(d.vehicleId).perLog[f.id];
+      toast(st ? `⛽ Guardado · ${st.kmGal.toFixed(1)} km/galón en este tanque` : '⛽ Tanqueo guardado');
+    },
+    onDelete: item && (() => {
+      const exp = findExpense(item.expenseId);
+      if (exp && confirm('¿Eliminar también el gasto registrado en Finanzas?')) {
+        exp.m.expenses = exp.m.expenses.filter(e => e.id !== item.expenseId);
+      }
+      state.fuel = state.fuel.filter(f => f.id !== item.id);
+      toast('Tanqueo eliminado');
+    }),
+  });
+}
+
+function findExpense(id) {
+  if (!id) return null;
+  for (const m of Object.values(state.months)) {
+    const e = m.expenses.find(x => x.id === id);
+    if (e) return { m, e };
+  }
   return null;
 }
 
-function renderConv() {
-  const amount = parseAmount($('#convAmount').value);
-  const from = copPer($('#convFrom').value), to = copPer($('#convTo').value);
-  if (!amount) return ($('#convResult').innerHTML = '<span class="muted small">Escribe un valor para convertir.</span>');
-  if (!from || !to) return ($('#convResult').innerHTML = '<span class="muted small">Aún no hay tasas cargadas.</span>');
-  const val = (amount * from) / to;
-  const code = $('#convTo').value;
-  const fmt = new Intl.NumberFormat(code === 'COP' ? 'es-CO' : 'es', { style: 'currency', currency: code, maximumFractionDigits: code === 'COP' ? 0 : 2 });
-  $('#convResult').innerHTML = `<strong>${fmt.format(val)}</strong>`;
+function renderVehicles() {
+  const box = $('#vehBox');
+  if (!state.vehicles.length) {
+    box.innerHTML = `<div class="empty-block">Agrega tu moto o tu carro para llevar el registro de tanqueos y consumo.<br><br>
+      <button class="btn primary" data-action="add-vehicle">+ Agregar vehículo</button></div>`;
+    return;
+  }
+  if (!vehicleById(currentVehicle)) currentVehicle = state.vehicles[0].id;
+  const v = vehicleById(currentVehicle);
+  const st = fuelStats(v.id);
+  const n = x => x == null ? '—' : x.toLocaleString('es-CO', { maximumFractionDigits: 1 });
+  box.innerHTML = `
+    <div class="chips-scroll">${state.vehicles.map(x =>
+      `<button class="chip${x.id === v.id ? ' on' : ''}" data-vehicle="${esc(x.id)}">${VEHICLE_TYPES[x.type]} ${esc(x.name)}</button>`).join('')}
+      <button class="chip" data-action="add-vehicle">+ Vehículo</button></div>
+    <div class="card veh-card">
+      <div class="card-head">
+        <div><h2>${VEHICLE_TYPES[v.type]} ${esc(v.name)}</h2><span class="muted small">${v.plate ? esc(v.plate) + ' · ' : ''}${st.lastKm != null ? n(st.lastKm) + ' km' : 'Sin registros'}</span></div>
+        <button class="chip-btn" data-action="edit-vehicle" data-id="${esc(v.id)}">Editar</button>
+      </div>
+      <div class="veh-big"><strong>${st.avg ? n(st.avg) : '—'}</strong><span>km por galón<br><small>promedio</small></span></div>
+      <div class="stats-grid">
+        <div class="mini-card"><span>Último tanque</span><strong>${st.lastKmGal ? n(st.lastKmGal) + ' km/gal' : '—'}</strong></div>
+        <div class="mini-card"><span>Costo por km</span><strong>${st.costKm ? money(Math.round(st.costKm)) : '—'}</strong></div>
+        <div class="mini-card"><span>Gasolina este mes</span><strong>${money(st.monthSpent)}</strong></div>
+        <div class="mini-card"><span>Km este mes</span><strong>${n(st.monthKm)} km</strong></div>
+      </div>
+      ${st.pricePerGal ? `<p class="muted small" style="margin:10px 0 0">Último precio: ${money(Math.round(st.pricePerGal))} por galón</p>` : ''}
+      <button class="btn primary full mt" data-action="add-fuel">⛽ Registrar tanqueo</button>
+    </div>
+    ${st.logs.length ? `<div class="group-title">Historial de tanqueos</div><div class="card"><ul class="list">${[...st.logs].reverse().map(f => {
+      const p = st.perLog[f.id];
+      return `<li>
+        <span class="ico" style="--c:var(--accent)">⛽</span>
+        <div class="item-main" data-action="edit-fuel" data-id="${esc(f.id)}">
+          <div class="item-title">${esc(capitalize(formatDate(f.date)))} · ${n(f.km)} km</div>
+          <div class="item-sub">${n(f.gallons)} gal${f.full ? ' · lleno' : ' · parcial'}${p ? ` · <span class="status ok">${n(p.km)} km · ${n(p.kmGal)} km/gal</span>` : ''} ${methodIcon(f.method)}</div>
+        </div>
+        <span class="amount">${money(f.total)}</span>
+      </li>`;
+    }).join('')}</ul></div>` : ''}`;
 }
 
-['#convAmount', '#convFrom', '#convTo'].forEach(sel => $(sel).addEventListener('input', renderConv));
-
-/* ----- Render de utilidades y franja de Inicio ----- */
-
 function renderUtils() {
-  // Clima
-  const c = state.utils.city;
-  $('#cityBtn').textContent = c ? `📍 ${c.name}` : 'Elegir ciudad';
-  const w = weatherSummary();
-  $('#weatherBox').innerHTML = !c
-    ? '<p class="muted small">Elige tu ciudad para ver el clima de hoy.</p>'
-    : !w ? '<p class="muted small">Cargando clima…</p>'
-    : `<div class="weather">
-        <span class="w-icon">${w.icon}</span>
-        <div><strong class="w-temp">${w.temp}°</strong><span class="muted small"> Sensación ${w.feels}°</span><br>
-        <span>${esc(w.text)} · Máx ${w.max}° · Mín ${w.min}°</span></div>
-      </div>
-      <p class="w-hint">${esc(rainHint(w))}</p>`;
-
-  // Pico y placa
-  const p = state.utils.pyp;
-  const t = pypToday();
-  if (!p) {
-    $('#pypBox').innerHTML = '<p class="muted small">Configura tus días y te avisamos en Inicio si hoy tienes pico y placa.</p>';
-  } else {
-    const nxt = nextPyp();
-    $('#pypBox').innerHTML = `<div class="pyp ${t.has ? 'on' : 'off'}">
-        <span class="pyp-icon">${t.has ? '⛔' : '✅'}</span>
-        <div><strong>${t.has ? 'Hoy tienes pico y placa' : t.why ? `Hoy no aplica (${t.why.toLowerCase()})` : 'Hoy puedes circular'}</strong>
-        <div class="muted small">${esc(p.vehicle)}${p.plate ? ' ' + esc(p.plate) : ''}${t.has && p.hours ? ' · ' + esc(p.hours) : ''}</div></div>
-      </div>
-      ${nxt ? `<p class="muted small" style="margin:10px 0 0">Próximo: ${esc(capitalize(nxt.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })))}</p>` : ''}`;
-  }
-
-  // Vencimientos
+  renderVehicles();
   const docs = [...state.utils.docs].sort((a, b) => a.date.localeCompare(b.date));
   $('#docList').innerHTML = docs.length ? docs.map(doc => {
     const st = docStatus(doc);
@@ -2239,33 +2213,15 @@ function renderUtils() {
       </div>
     </li>`;
   }).join('') : emptyItem('Agrega tu SOAT, licencia o pasaporte.');
-
-  // Dividir cuenta y dólar
-  renderSplit();
-  $('#trmBox').innerHTML = rates
-    ? `<div class="trm"><strong>${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 2 }).format(rates.trm)}</strong>
-        ${rates.prev ? `<span class="${rates.trm >= rates.prev ? 'neg' : 'pos'}">${rates.trm >= rates.prev ? '▲' : '▼'} ${Math.abs(rates.trm - rates.prev).toFixed(2)}</span>` : ''}
-        <div class="muted small">TRM oficial vigente desde ${esc(formatDate(rates.since.slice(0, 10)))}${rates.eurUsd ? ` · Euro ≈ ${money(Math.round(rates.trm * rates.eurUsd))}` : ''}</div></div>`
-    : '<p class="muted small">Cargando el dólar de hoy…</p>';
-  renderConv();
 }
 
 function renderDayStrip() {
-  const chips = [];
-  const w = weatherSummary();
-  if (w) chips.push(`<button class="strip-chip" data-goto="utilidades">${w.icon} ${w.temp}° · ${esc(w.rainAt != null || w.rain >= 40 ? '☂️ lluvia' : w.text.toLowerCase())}</button>`);
-  else if (!state.utils.city) chips.push('<button class="strip-chip" data-action="pick-city">🌤️ Ver el clima</button>');
-  const t = pypToday();
-  if (t) chips.push(`<button class="strip-chip ${t.has ? 'warn' : ''}" data-goto="utilidades">${t.has ? '⛔ Hoy tienes pico y placa' : '🚗 Hoy puedes circular'}</button>`);
-  const due = state.utils.docs.map(d => ({ d, st: docStatus(d) })).filter(x => x.st.diff <= 30).sort((a, b) => a.st.diff - b.st.diff)[0];
-  if (due) chips.push(`<button class="strip-chip warn" data-goto="utilidades">${esc(due.d.emoji)} ${esc(due.d.name)}: ${esc(due.st.text.toLowerCase())}</button>`);
-  if (rates) chips.push(`<button class="strip-chip" data-goto="utilidades">💵 ${money(Math.round(rates.trm))}</button>`);
-  $('#dayStrip').innerHTML = chips.join('');
-  $('#dayStrip').hidden = !chips.length;
+  const due = state.utils.docs.map(d => ({ d, st: docStatus(d) })).filter(x => x.st.diff <= 30).sort((a, b) => a.st.diff - b.st.diff);
+  $('#dayStrip').innerHTML = due.map(x =>
+    `<button class="strip-chip warn" data-goto="utilidades">${esc(x.d.emoji)} ${esc(x.d.name)}: ${esc(x.st.text.toLowerCase())}</button>`).join('');
+  $('#dayStrip').hidden = !due.length;
 }
 
-loadWeather();
-loadRates();
 
 /* ===================== Bienvenida ===================== */
 
@@ -2320,6 +2276,12 @@ function startOnboarding() {
 /* ===================== Eventos ===================== */
 
 document.addEventListener('click', e => {
+  const vchip = e.target.closest('[data-vehicle]');
+  if (vchip) {
+    currentVehicle = vchip.dataset.vehicle;
+    return renderVehicles();
+  }
+
   const nav = e.target.closest('[data-goto]');
   if (nav) return goto(nav.dataset.goto, nav.dataset.sub);
 
@@ -2359,12 +2321,14 @@ document.addEventListener('click', e => {
     case 'edit-reminder': return reminderForm(state.reminders.find(x => x.id === id));
     case 'preset-outlook': return reminderForm(null, PRESETS[0]);
     case 'add-note': return noteForm(null);
-    case 'pick-city': return cityPicker();
-    case 'pyp-setup': return pypForm();
+    case 'add-vehicle': return vehicleForm(null);
+    case 'edit-vehicle': return vehicleForm(vehicleById(id));
+    case 'add-fuel': return fuelForm(null);
+    case 'edit-fuel': return fuelForm(state.fuel.find(x => x.id === id));
+    case 'pay-card': return payCardForm();
     case 'add-doc': return docForm(null);
     case 'edit-doc': return docForm(state.utils.docs.find(x => x.id === id));
-    case 'refresh-trm': return loadRates(true);
-    case 'split-save': return saveSplitExpense();
+
     case 'edit-note': return noteForm(state.notes.find(x => x.id === id));
     case 'add-expense': return expenseForm(null);
     case 'edit-expense': return expenseForm(m.expenses.find(x => x.id === id));
@@ -2412,6 +2376,11 @@ $('#profileName').addEventListener('input', e => {
   state.profile.name = e.target.value.trim();
   saveState();
   renderHeader();
+});
+
+$('#defaultMethod').addEventListener('change', e => {
+  state.settings.defaultMethod = e.target.value;
+  saveState();
 });
 
 $('#outlookType').addEventListener('change', e => {
@@ -2478,9 +2447,9 @@ $('#exportCsv').addEventListener('click', () => {
   const m = getMonth();
   if (!m.expenses.length) return toast('No hay gastos este mes');
   const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-  const rows = [['Fecha', 'Categoría', 'Descripción', 'Monto', 'Tipo']]
+  const rows = [['Fecha', 'Categoría', 'Descripción', 'Monto', 'Tipo', 'Forma de pago']]
     .concat([...m.expenses].sort((a, b) => a.date.localeCompare(b.date)).map(e =>
-      [e.date, catById(e.categoryId).name, e.note, e.amount.toFixed(2), e.plannedId ? 'Fijo' : 'Adicional']));
+      [e.date, catById(e.categoryId).name, e.note, e.amount.toFixed(2), e.plannedId ? 'Fijo' : 'Adicional', METHODS.find(x => x[0] === methodOf(e))[2]]));
   download(`gastos-${currentMonth}.csv`, '﻿' + rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');
 });
 
@@ -2495,8 +2464,6 @@ $('#resetAll').addEventListener('click', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     render();
-    loadWeather();
-    loadRates();
   }
 });
 
