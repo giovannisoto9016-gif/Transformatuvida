@@ -1933,21 +1933,40 @@ $('#rollover').addEventListener('change', e => {
 
 /* ===================== Utilidades: vehículos y vencimientos ===================== */
 
-/* ----- Vencimientos de documentos ----- */
+/* ----- Documentos del vehículo (SOAT, tecnomecánica, impuesto…) ----- */
 
-const DOC_PRESETS = [['🛡️', 'SOAT'], ['🔧', 'Tecnomecánica'], ['🪪', 'Licencia de conducción'], ['🛂', 'Pasaporte'], ['📑', 'Póliza / seguro'], ['🧾', 'Impuesto vehicular']];
+const DOC_TYPES = [
+  { type: 'soat', emoji: '🛡️', name: 'SOAT', main: true },
+  { type: 'tecno', emoji: '🔧', name: 'Tecnomecánica', main: true },
+  { type: 'impuesto', emoji: '🧾', name: 'Impuesto vehicular', main: true },
+  { type: 'poliza', emoji: '📑', name: 'Póliza todo riesgo' },
+  { type: 'otro', emoji: '📄', name: 'Otro documento' },
+];
+
+function docType(t) {
+  return DOC_TYPES.find(d => d.type === t) || DOC_TYPES[DOC_TYPES.length - 1];
+}
+
+function docsOf(vehicleId) {
+  return state.utils.docs.filter(d => d.vehicleId === vehicleId);
+}
 
 function docStatus(doc) {
   const diff = dayDiff(parseIso(doc.date));
   if (diff < 0) return { cls: 'late', text: `Vencido hace ${-diff} día${diff === -1 ? '' : 's'}`, diff };
   if (diff === 0) return { cls: 'late', text: 'Vence hoy', diff };
   if (diff <= 30) return { cls: 'soon', text: `Vence en ${diff} día${diff === 1 ? '' : 's'}`, diff };
-  return { cls: 'ok', text: `Vigente · ${formatDate(doc.date)} ${doc.date.slice(0, 4)}`, diff };
+  return { cls: 'ok', text: `Vigente hasta ${formatDate(doc.date)} ${doc.date.slice(0, 4)}`, diff };
+}
+
+function docLabel(doc) {
+  const v = vehicleById(doc.vehicleId);
+  return `${doc.name}${v ? ' ' + v.name : ''}`;
 }
 
 function docEvent(doc) {
   return {
-    title: `${doc.emoji} Vence ${doc.name}`,
+    title: `${doc.emoji} Vence ${docLabel(doc)}`,
     notes: doc.notes || '',
     start: dateTime(doc.date, '09:00'),
     minutes: 30,
@@ -1957,49 +1976,84 @@ function docEvent(doc) {
   };
 }
 
-function docForm(item) {
-  const v = item || { emoji: '🛡️', name: '', date: '', notes: '' };
+function plusYear(iso) {
+  const d = parseIso(iso);
+  d.setFullYear(d.getFullYear() + 1);
+  return isoDate(d);
+}
+
+function docForm(item, preset) {
+  const base = item || { vehicleId: preset?.vehicleId || currentVehicle, type: preset?.type || 'soat', date: '', notes: '' };
+  const v = vehicleById(base.vehicleId);
+  const t = docType(base.type);
   openSheet({
-    title: item ? 'Editar vencimiento' : 'Nuevo vencimiento',
-    body: (item ? '' : `<div class="presets">${DOC_PRESETS.map(([e, n], i) => `<button type="button" class="chip" data-doc="${i}">${e} ${esc(n)}</button>`).join('')}</div>`) +
-      field('Documento', `<input name="name" class="big-input" maxlength="60" placeholder="SOAT del carro" required value="${esc(v.name)}">`) +
-      field('Fecha de vencimiento', `<input name="date" type="date" required value="${esc(v.date)}">`) +
-      field('Notas', `<input name="notes" maxlength="120" placeholder="Placa, número de póliza…" value="${esc(v.notes)}">`) +
-      `<input type="hidden" name="emoji" value="${esc(v.emoji)}">` +
-      (item ? '' : `<label class="switch-row">📅 Pasarlo a mi calendario (aviso 30 y 7 días antes)<input type="checkbox" name="addCal" checked></label>`),
-    saveLabel: item ? 'Guardar' : 'Agregar',
-    extra: item ? [{ label: '📅 Agregar al calendario', onClick: () => calendarChooser(docEvent(item)) }] : [],
+    title: `${t.emoji} ${item ? item.name : t.type === 'otro' ? 'Documento' : t.name}${v ? ' · ' + v.name : ''}`,
+    body: (t.type === 'otro' ? field('Nombre', `<input name="name" maxlength="60" placeholder="Ej. Revisión de gases" required value="${esc(item?.name || '')}">`) : '') +
+      field('¿Hasta cuándo está vigente?', `<input name="date" type="date" required value="${esc(base.date)}" autofocus>`) +
+      field('Notas', `<input name="notes" maxlength="120" placeholder="Aseguradora, número de póliza, valor pagado…" value="${esc(base.notes)}">`) +
+      `<label class="switch-row">📅 Pasarlo a mi calendario (aviso 30 y 7 días antes)<input type="checkbox" name="addCal"${item ? '' : ' checked'}></label>`,
+    saveLabel: 'Guardar',
+    extra: item ? [{
+      label: '✅ Ya lo renové (+1 año)',
+      onClick: () => {
+        item.date = plusYear(item.date);
+        saveState();
+        render();
+        toast(`Renovado hasta ${formatDate(item.date)} ${item.date.slice(0, 4)}`);
+        calendarChooser(docEvent(item));
+      },
+    }] : [],
     onSubmit: d => {
-      const name = d.name.trim();
-      if (!name || !d.date) return toast('Escribe el documento y la fecha'), false;
-      const data = { name, date: d.date, notes: d.notes.trim(), emoji: d.emoji || '📄' };
+      if (!d.date) return toast('Elige la fecha de vencimiento'), false;
+      const name = t.type === 'otro' ? (d.name || '').trim() || 'Documento' : t.name;
+      const data = { date: d.date, notes: d.notes.trim(), name, emoji: t.emoji, type: t.type, vehicleId: base.vehicleId };
       let doc = item;
       if (doc) Object.assign(doc, data);
       else {
         doc = { id: uid(), ...data };
         state.utils.docs.push(doc);
       }
-      toast('Vencimiento guardado');
+      toast(`${t.emoji} ${name} guardado`);
       if (d.addCal) afterSheet = () => calendarChooser(docEvent(doc));
     },
     onDelete: item && (() => {
       state.utils.docs = state.utils.docs.filter(x => x.id !== item.id);
-      toast('Vencimiento eliminado');
+      toast('Documento eliminado');
     }),
-  });
-  sheet.querySelector('.presets')?.addEventListener('click', e => {
-    const b = e.target.closest('[data-doc]');
-    if (!b) return;
-    const [emoji, name] = DOC_PRESETS[b.dataset.doc];
-    const f = $('#sheetForm');
-    f.name.value = name;
-    f.emoji.value = emoji;
-    sheet.querySelectorAll('[data-doc]').forEach(x => x.classList.toggle('on', x === b));
-    f.date.focus();
   });
 }
 
+function vehicleDocsHtml(v) {
+  const docs = docsOf(v.id);
+  const rows = DOC_TYPES.filter(t => t.main).map(t => {
+    const doc = docs.find(d => d.type === t.type);
+    if (!doc) {
+      return `<li>
+        <span class="ico" style="--c:var(--muted)">${t.emoji}</span>
+        <div class="item-main" data-action="add-doc" data-vehicle-doc="${esc(v.id)}" data-type="${t.type}">
+          <div class="item-title">${esc(t.name)}</div>
+          <div class="item-sub"><span class="status">Sin fecha · toca para agregar</span></div>
+        </div>
+      </li>`;
+    }
+    return docRow(doc);
+  });
+  const extras = docs.filter(d => !docType(d.type).main).sort((a, b) => a.date.localeCompare(b.date)).map(docRow);
+  return `<ul class="list">${rows.join('')}${extras.join('')}</ul>
+    <button class="chip-btn mt" data-action="add-doc" data-vehicle-doc="${esc(v.id)}" data-type="poliza">+ Póliza</button>
+    <button class="chip-btn mt" data-action="add-doc" data-vehicle-doc="${esc(v.id)}" data-type="otro">+ Otro documento</button>`;
+}
 
+function docRow(doc) {
+  const st = docStatus(doc);
+  return `<li>
+    <span class="ico" style="--c:var(--accent)">${esc(doc.emoji)}</span>
+    <div class="item-main" data-action="edit-doc" data-id="${esc(doc.id)}">
+      <div class="item-title">${esc(doc.name)}</div>
+      <div class="item-sub"><span class="status ${st.cls}">${esc(st.text)}</span>${doc.notes ? esc(doc.notes) : ''}</div>
+    </div>
+  </li>`;
+}
 
 /* ----- Vehículos y tanqueos ----- */
 
@@ -2077,9 +2131,10 @@ function vehicleForm(item) {
       toast('Vehículo guardado');
     },
     onDelete: item && (() => {
-      if (!confirm(`¿Eliminar ${item.name} y todos sus tanqueos? (Los gastos ya registrados en Finanzas se conservan.)`)) return false;
+      if (!confirm(`¿Eliminar ${item.name} con sus tanqueos y documentos? (Los gastos ya registrados en Finanzas se conservan.)`)) return false;
       state.vehicles = state.vehicles.filter(x => x.id !== item.id);
       state.fuel = state.fuel.filter(f => f.vehicleId !== item.id);
+      state.utils.docs = state.utils.docs.filter(d => d.vehicleId !== item.id);
       currentVehicle = null;
       toast('Vehículo eliminado');
     }),
@@ -2187,6 +2242,11 @@ function renderVehicles() {
       ${st.pricePerGal ? `<p class="muted small" style="margin:10px 0 0">Último precio: ${money(Math.round(st.pricePerGal))} por galón</p>` : ''}
       <button class="btn primary full mt" data-action="add-fuel">⛽ Registrar tanqueo</button>
     </div>
+    <div class="card">
+      <div class="card-head"><h2>📄 Documentos</h2></div>
+      <p class="muted small">Te avisamos en Inicio cuando falte menos de un mes para que se venzan.</p>
+      ${vehicleDocsHtml(v)}
+    </div>
     ${st.logs.length ? `<div class="group-title">Historial de tanqueos</div><div class="card"><ul class="list">${[...st.logs].reverse().map(f => {
       const p = st.perLog[f.id];
       return `<li>
@@ -2202,26 +2262,18 @@ function renderVehicles() {
 
 function renderUtils() {
   renderVehicles();
-  const docs = [...state.utils.docs].sort((a, b) => a.date.localeCompare(b.date));
-  $('#docList').innerHTML = docs.length ? docs.map(doc => {
-    const st = docStatus(doc);
-    return `<li>
-      <span class="ico" style="--c:var(--accent)">${esc(doc.emoji)}</span>
-      <div class="item-main" data-action="edit-doc" data-id="${esc(doc.id)}">
-        <div class="item-title">${esc(doc.name)}</div>
-        <div class="item-sub"><span class="status ${st.cls}">${esc(st.text)}</span>${doc.notes ? esc(doc.notes) : ''}</div>
-      </div>
-    </li>`;
-  }).join('') : emptyItem('Agrega tu SOAT, licencia o pasaporte.');
+  // Documentos que quedaron sin vehículo (de versiones anteriores)
+  const loose = state.utils.docs.filter(d => !vehicleById(d.vehicleId));
+  $('#looseDocsCard').hidden = !loose.length;
+  $('#looseDocs').innerHTML = loose.map(docRow).join('');
 }
 
 function renderDayStrip() {
   const due = state.utils.docs.map(d => ({ d, st: docStatus(d) })).filter(x => x.st.diff <= 30).sort((a, b) => a.st.diff - b.st.diff);
   $('#dayStrip').innerHTML = due.map(x =>
-    `<button class="strip-chip warn" data-goto="utilidades">${esc(x.d.emoji)} ${esc(x.d.name)}: ${esc(x.st.text.toLowerCase())}</button>`).join('');
+    `<button class="strip-chip warn" data-goto="utilidades">${esc(x.d.emoji)} ${esc(docLabel(x.d))}: ${esc(x.st.text.toLowerCase())}</button>`).join('');
   $('#dayStrip').hidden = !due.length;
 }
-
 
 /* ===================== Bienvenida ===================== */
 
@@ -2326,7 +2378,7 @@ document.addEventListener('click', e => {
     case 'add-fuel': return fuelForm(null);
     case 'edit-fuel': return fuelForm(state.fuel.find(x => x.id === id));
     case 'pay-card': return payCardForm();
-    case 'add-doc': return docForm(null);
+    case 'add-doc': return docForm(null, { vehicleId: el.dataset.vehicleDoc || currentVehicle, type: el.dataset.type || 'soat' });
     case 'edit-doc': return docForm(state.utils.docs.find(x => x.id === id));
 
     case 'edit-note': return noteForm(state.notes.find(x => x.id === id));

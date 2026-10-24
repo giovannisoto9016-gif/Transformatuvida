@@ -101,7 +101,7 @@
         </button>
         <button class="tile tile-wide" data-goto="utilidades">
           <span class="tile-ico">🚗</span>
-          <span class="tile-wide-text"><span class="tile-name">Vehículos y vencimientos</span><small>Vehículos y tanqueos · Vencimientos</small></span>
+          <span class="tile-wide-text"><span class="tile-name">Vehículos</span><small>Tanqueos y consumo · SOAT · Tecnomecánica · Impuesto</small></span>
           <span class="muted">›</span>
         </button>
       </div>
@@ -293,16 +293,12 @@
     <section class="view" id="view-utilidades">
       <button class="back" data-goto="hub">‹ Inicio</button>
 
-      <h2 class="section-title">🚗 Vehículos</h2>
+      <h2 class="section-title">🚗 Mis vehículos</h2>
       <div id="vehBox" class="veh-box"></div>
 
-      <div class="card">
-        <div class="card-head">
-          <h2>📄 Vencimientos</h2>
-          <button class="chip-btn" data-action="add-doc">+ Agregar</button>
-        </div>
-        <p class="muted small">SOAT, tecnomecánica, licencia, pasaporte… Te avisamos antes de que se venzan.</p>
-        <ul class="list" id="docList"></ul>
+      <div class="card" id="looseDocsCard" hidden>
+        <div class="card-head"><h2>📄 Otros documentos</h2></div>
+        <ul class="list" id="looseDocs"></ul>
       </div>
     </section>
 
