@@ -767,7 +767,7 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 }
 .lock[hidden] { display: none; }
 .lock-logo { width: 96px; height: 96px; border-radius: 26px; box-shadow: var(--shadow); }
-.lock h2 { font-size: 1.2rem; }
+.lock h2 { font-size: 1.2rem; text-align: center; max-width: 300px; }
 .pin-dots { display: flex; gap: 14px; height: 18px; }
 .pin-dots i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); }
 .pin-dots i.on { background: #fff; border-color: #fff; }
@@ -789,3 +789,19 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 .keypad .kp-face[hidden] { display: flex !important; visibility: hidden; }
 .lock .link { color: rgba(255,255,255,.7); }
 .pin-input { letter-spacing: .5em; text-align: center; }
+
+.lock .lock-pin { display: none; }
+.lock.pin-mode .lock-pin { display: flex; }
+.lock.pin-mode .lock-face { display: none; }
+.lock-face, .lock-pin { flex-direction: column; align-items: center; gap: 16px; }
+.lock-face { display: flex; margin-top: 10px; }
+.face-btn {
+  border: 0; border-radius: 22px;
+  background: var(--grad); color: #fff;
+  font: inherit; font-size: 1.05rem; font-weight: 700;
+  padding: 22px 28px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.face-btn span { font-size: 2.6rem; }

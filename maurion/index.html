@@ -302,10 +302,10 @@
 
       <div class="card">
         <h2>🔒 Seguridad</h2>
-        <p class="muted small">Pide un PIN (o Face ID) al abrir la app. <span id="securityState"></span></p>
+        <p class="muted small">Pide Face ID al abrir la app; si no te reconoce, te pide tu contraseña. <span id="securityState"></span></p>
         <div class="btn-col" id="securityBtns"></div>
         <div class="field mt" id="lockAfterRow">
-          <label for="lockAfter">Volver a pedir el PIN</label>
+          <label for="lockAfter">Volver a bloquear</label>
           <select id="lockAfter">
             <option value="0">Cada vez que salgo de la app</option>
             <option value="1">Después de 1 minuto</option>
@@ -316,9 +316,9 @@
       </div>
 
       <div class="card">
-        <h2>↪️ Sobrante del mes</h2>
+        <h2>🐷 Ahorro del mes</h2>
         <label class="switch-row mt">Pasar lo que sobra al mes siguiente<input type="checkbox" id="rollover"></label>
-        <p class="muted small" style="margin:0">Aparece como “Sobrante de…” en tus ingresos. Lo puedes editar o quitar en cada mes.</p>
+        <p class="muted small" style="margin:0">Aparece como “Ahorro de…” en tus ingresos del mes siguiente. Lo puedes editar o quitar en cada mes.</p>
       </div>
 
       <div class="card">
@@ -397,17 +397,24 @@
   <!-- ============ BLOQUEO ============ -->
   <div class="lock" id="lock" hidden>
     <img src="icons/icon-192.png" alt="" class="lock-logo">
-    <h2>Ingresa tu PIN</h2>
-    <div class="pin-dots" id="pinDots"></div>
-    <div class="keypad">
-      <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
-      <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
-      <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
-      <button id="lockFace" class="kp-face" aria-label="Usar Face ID">🙂<small>Face ID</small></button>
-      <button data-key="0">0</button>
-      <button data-key="del" class="kp-del" aria-label="Borrar">⌫</button>
+    <div class="lock-face">
+      <h2>MAURION está bloqueada</h2>
+      <button class="face-btn" id="lockFace"><span>🙂</span>Desbloquear con Face ID</button>
+      <button class="link" id="lockUsePin">Usar contraseña</button>
     </div>
-    <button class="link" id="lockForgot">¿Olvidaste tu PIN?</button>
+    <div class="lock-pin">
+      <h2 id="lockPinTitle">Ingresa tu contraseña</h2>
+      <div class="pin-dots" id="pinDots"></div>
+      <div class="keypad">
+        <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+        <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+        <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+        <button id="lockFaceKey" class="kp-face" aria-label="Usar Face ID">🙂<small>Face ID</small></button>
+        <button data-key="0">0</button>
+        <button data-key="del" class="kp-del" aria-label="Borrar">⌫</button>
+      </div>
+      <button class="link" id="lockForgot">¿Olvidaste tu contraseña?</button>
+    </div>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

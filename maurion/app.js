@@ -503,9 +503,9 @@ function renderPresupuesto() {
 
   const c = carryInfo(currentMonth);
   const carryRow = c ? `<li>
-      <span class="ico" style="--c:var(--accent)">↪️</span>
+      <span class="ico" style="--c:var(--accent)">🐷</span>
       <div class="item-main" data-action="edit-carry">
-        <div class="item-title">${c.amount < 0 ? 'Faltante' : 'Sobrante'} ${esc(monthName(c.prevKey))}</div>
+        <div class="item-title">${c.amount < 0 ? 'Faltante de' : 'Ahorro de'} ${esc(monthName(c.prevKey))}</div>
         <div class="item-sub">${c.manual ? 'Editado por ti' : 'Automático'}</div>
       </div>
       <span class="amount ${c.amount < 0 ? 'neg' : 'pos'}">${money(c.amount)}</span>
@@ -1451,12 +1451,12 @@ function carryForm() {
   if (!c) return;
   const prev = monthName(c.prevKey);
   openSheet({
-    title: `Sobrante de ${prev}`,
+    title: `Ahorro de ${prev}`,
     body: amountInput(c.amount) +
       `<p class="muted small" style="text-align:center;margin:-6px 0 14px">Cálculo automático: <strong>${money(c.auto)}</strong><br>(ingresos − gastos de ${esc(prev)}). Si es negativo, es lo que te faltó.</p>`,
     extra: [
-      ...(c.manual ? [{ label: '↺ Volver al cálculo automático', onClick: () => { getMonth(currentMonth, true).carry = null; finish('Sobrante automático'); } }] : []),
-      { label: '🚫 No pasar sobrante a este mes', onClick: () => { getMonth(currentMonth, true).carry = { off: true }; finish('Sobrante quitado de este mes'); } },
+      ...(c.manual ? [{ label: '↺ Volver al cálculo automático', onClick: () => { getMonth(currentMonth, true).carry = null; finish('Ahorro automático'); } }] : []),
+      { label: '🚫 No pasar ahorro a este mes', onClick: () => { getMonth(currentMonth, true).carry = { off: true }; finish('Ahorro quitado de este mes'); } },
     ],
     onSubmit: d => {
       const raw = String(d.amount).trim();
@@ -1464,7 +1464,7 @@ function carryForm() {
       const amount = parseAmount(raw.replace(/^-/, ''));
       if (amount == null && !/^-?0+$/.test(raw)) return toast('Escribe un monto válido'), false;
       getMonth(currentMonth, true).carry = { amount: (amount || 0) * (neg ? -1 : 1) };
-      toast('Sobrante actualizado');
+      toast('Ahorro actualizado');
     },
   });
   function finish(msg) {
@@ -1630,13 +1630,27 @@ function lockEnabled() {
   return !!state.security.pinHash;
 }
 
+let faceBusy = false;
+
+function setLockMode(mode, title) {
+  const lock = $('#lock');
+  lock.classList.toggle('pin-mode', mode === 'pin');
+  $('#lockPinTitle').textContent = title || 'Ingresa tu contraseña';
+  $('#lockFaceKey').hidden = !state.security.credId;
+}
+
 function showLock() {
   if (!lockEnabled()) return;
   pinBuffer = '';
   renderPinDots();
   $('#lock').hidden = false;
-  $('#lockFace').hidden = !state.security.credId;
   if (sheet.open) closeSheet();
+  if (state.security.credId) {
+    setLockMode('face');
+    faceUnlock(true);
+  } else {
+    setLockMode('pin');
+  }
 }
 
 function renderPinDots(error) {
@@ -1668,9 +1682,10 @@ $('#lock').addEventListener('click', async e => {
     if (pinBuffer.length === (state.security.pinLen || 4)) await tryPin();
     return;
   }
-  if (e.target.closest('#lockFace')) return faceUnlock();
+  if (e.target.closest('#lockFace, #lockFaceKey')) return faceUnlock();
+  if (e.target.closest('#lockUsePin')) return setLockMode('pin');
   if (e.target.closest('#lockForgot')) {
-    if (confirm('Si olvidaste tu PIN, la única forma de entrar es borrar los datos de la app (luego puedes restaurar una copia de seguridad). ¿Borrar todo?')) {
+    if (confirm('Si olvidaste tu contraseña, la única forma de entrar es borrar los datos de la app (luego puedes restaurar una copia de seguridad). ¿Borrar todo?')) {
       state = defaultState();
       saveState();
       location.reload();
@@ -1678,7 +1693,12 @@ $('#lock').addEventListener('click', async e => {
   }
 });
 
-async function faceUnlock() {
+// Al abrir se lanza Face ID solo. Si falla o lo cancelas, pide la contraseña.
+// Si iOS no deja lanzarlo sin un toque (falla al instante), queda el botón de Face ID.
+async function faceUnlock(auto = false) {
+  if (faceBusy || !state.security.credId) return;
+  faceBusy = true;
+  const started = Date.now();
   try {
     await navigator.credentials.get({
       publicKey: {
@@ -1690,20 +1710,36 @@ async function faceUnlock() {
     });
     unlock();
   } catch {
-    toast('No se pudo verificar. Usa tu PIN.');
+    const quick = Date.now() - started < 700;
+    if (!(auto && quick)) setLockMode('pin', 'No te reconocí 🙈 Ingresa tu contraseña');
+  } finally {
+    faceBusy = false;
   }
+}
+
+function faceIdOffer() {
+  if (!window.PublicKeyCredential) return;
+  openSheet({
+    title: '¿Activar Face ID?',
+    body: `<p class="muted small" style="text-align:center;margin:0 0 6px">Así MAURION se abre con tu cara. Si no te reconoce, te pedirá la contraseña que acabas de crear.</p>`,
+    extra: [
+      { label: '🙂 Sí, activar Face ID', onClick: () => { closeSheet(); enableFaceId(); } },
+      { label: 'Ahora no', onClick: closeSheet },
+    ],
+  });
 }
 
 function pinSetupForm() {
   openSheet({
-    title: lockEnabled() ? 'Cambiar PIN' : 'Crear PIN',
-    body: `<p class="muted small" style="text-align:center;margin:0 0 12px">Elige un PIN de 4 a 6 números. Te lo pediremos al abrir MAURION.</p>` +
-      field('PIN nuevo', `<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required autofocus class="big-input pin-input">`) +
-      field('Repite el PIN', `<input name="pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required class="big-input pin-input">`),
-    saveLabel: 'Guardar PIN',
+    title: lockEnabled() ? 'Cambiar contraseña' : 'Crear contraseña',
+    body: `<p class="muted small" style="text-align:center;margin:0 0 12px">Elige una contraseña de 4 a 6 números. Se usa cuando Face ID no te reconoce.</p>` +
+      field('Contraseña nueva', `<input name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required autofocus class="big-input pin-input">`) +
+      field('Repite la contraseña', `<input name="pin2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" required class="big-input pin-input">`),
+    saveLabel: 'Guardar contraseña',
     onSubmit: d => {
-      if (!/^\d{4,6}$/.test(d.pin)) return toast('El PIN debe tener de 4 a 6 números'), false;
-      if (d.pin !== d.pin2) return toast('Los PIN no coinciden'), false;
+      if (!/^\d{4,6}$/.test(d.pin)) return toast('Debe tener de 4 a 6 números'), false;
+      if (d.pin !== d.pin2) return toast('Las contraseñas no coinciden'), false;
+      if (!state.security.credId) afterSheet = faceIdOffer;
       const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
       hashPin(d.pin, salt).then(h => {
         state.security.salt = salt;
@@ -1726,7 +1762,7 @@ function removeLock() {
 }
 
 async function enableFaceId() {
-  if (!lockEnabled()) return toast('Primero crea un PIN');
+  if (!lockEnabled()) return toast('Primero crea una contraseña');
   try {
     const ok = window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
     if (!ok) return toast('Este celular no permite Face ID para la app');
@@ -1785,12 +1821,12 @@ async function enableBadge() {
 
 function renderSecurity() {
   const on = lockEnabled();
-  $('#securityState').textContent = on ? (state.security.credId ? '🔒 Activo con PIN y Face ID' : '🔒 Activo con PIN') : 'Desactivado';
+  $('#securityState').textContent = on ? (state.security.credId ? '🔒 Activo con Face ID y contraseña' : '🔒 Activo con contraseña (Face ID apagado)') : 'Desactivado';
   $('#securityBtns').innerHTML = on
-    ? `<button class="btn soft" data-action="set-pin">Cambiar PIN</button>` +
+    ? `<button class="btn soft" data-action="set-pin">Cambiar contraseña</button>` +
       (state.security.credId ? '' : `<button class="btn soft" data-action="enable-faceid">Activar Face ID</button>`) +
       `<button class="btn danger-soft" data-action="remove-lock">Quitar bloqueo</button>`
-    : `<button class="btn primary" data-action="set-pin">Activar bloqueo con PIN</button>`;
+    : `<button class="btn primary" data-action="set-pin">Activar Face ID y contraseña</button>`;
   $('#lockAfter').value = String(state.security.lockAfter);
   $('#lockAfterRow').hidden = !on;
   $('#badgeBtn').textContent = state.settings.badge ? 'Desactivar número en el ícono' : 'Activar número en el ícono';
