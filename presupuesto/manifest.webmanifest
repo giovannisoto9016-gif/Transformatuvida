@@ -1,9 +1,9 @@
 {
-  "name": "MAURIX",
-  "short_name": "MAURIX",
-  "description": "MAURIX: finanzas, tareas, recordatorios y notas en una sola app.",
+  "name": "MAURION",
+  "short_name": "MAURION",
+  "description": "MAURION: finanzas, tareas, recordatorios y notas en una sola app.",
   "lang": "es",
-  "id": "maurix",
+  "id": "maurion",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -13,7 +13,6 @@
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

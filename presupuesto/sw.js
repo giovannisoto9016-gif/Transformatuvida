@@ -1,12 +1,12 @@
 // Cache de la app para que funcione sin internet.
-const CACHE = 'maurix-v4';
+const CACHE = 'maurion-v5';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './manifest.webmanifest',
-  './icons/icon.svg',
+  './icons/logo-maurion.jpg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',

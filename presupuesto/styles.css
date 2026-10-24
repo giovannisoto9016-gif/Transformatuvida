@@ -548,7 +548,7 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 .ob-step h1 { font-size: 2.3rem; line-height: 1.1; }
 .ob-step h2 { font-size: 1.6rem; }
 .ob-step p { color: var(--muted); margin: 0; line-height: 1.5; }
-.ob-logo img { width: 92px; height: 92px; border-radius: 26px; box-shadow: var(--shadow); }
+.ob-logo img { width: 220px; height: 220px; border-radius: 40px; box-shadow: var(--shadow); display: block; margin: 0 auto; }
 .ob-count { color: var(--muted); font-size: 0.85rem; font-weight: 600; }
 .ob-input { font-size: 1.4rem; padding: 16px; font-weight: 700; }
 .ob-options { display: flex; flex-direction: column; gap: 8px; }
@@ -585,7 +585,7 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-/* ===================== MAURIX: hub y módulos ===================== */
+/* ===================== MAURION: hub y módulos ===================== */
 .mt { margin-top: 10px; }
 .subview { display: none; flex-direction: column; gap: 14px; }
 .subview.active { display: flex; animation: fade-in .25s ease; }
@@ -725,3 +725,6 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 .empty-block { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 28px 10px; font-size: 0.92rem; background: var(--surface); border: 1px dashed var(--border); border-radius: 18px; }
 
 #taskGroups, #remGroups { display: flex; flex-direction: column; gap: 14px; }
+
+.avatar.photo { background: url(icons/icon-192.png) 50% 12% / 210% no-repeat, #0a1d52; border: 2px solid var(--accent); }
+.about-logo { width: 120px; height: 120px; border-radius: 26px; margin-bottom: 4px; }

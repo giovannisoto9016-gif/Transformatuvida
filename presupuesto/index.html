@@ -3,16 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>MAURIX</title>
-  <meta name="description" content="MAURIX: finanzas, tareas, recordatorios y notas en una sola app.">
+  <title>MAURION</title>
+  <meta name="description" content="MAURION: finanzas, tareas, recordatorios y notas en una sola app.">
   <meta name="theme-color" content="#071433">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="MAURIX">
-  <meta name="application-name" content="MAURIX">
+  <meta name="apple-mobile-web-app-title" content="MAURION">
+  <meta name="application-name" content="MAURION">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
@@ -21,8 +20,7 @@
   <!-- ============ BIENVENIDA ============ -->
   <div class="onboarding" id="onboarding" hidden>
     <div class="ob-step active" data-step="0">
-      <div class="ob-logo"><img src="icons/icon.svg" alt=""></div>
-      <span class="wordmark">MAURIX</span>
+      <div class="ob-logo"><img src="icons/logo-maurion.jpg" alt="MAURION"></div>
       <h1>Tu vida,<br><span class="grad-text">en una sola app</span></h1>
       <p>Finanzas, tareas, recordatorios y notas. Todo organizado y conectado con tu calendario.</p>
       <button class="btn primary big" data-ob-next>Empezar</button>
@@ -54,7 +52,7 @@
   <!-- ============ ENCABEZADO ============ -->
   <header class="appbar">
     <div class="hello">
-      <div class="avatar" id="avatar">M</div>
+      <div class="avatar photo" id="avatar"></div>
       <div>
         <small id="helloTime">Hola</small>
         <strong id="helloName">Mauricio</strong>
@@ -275,7 +273,7 @@
       <button class="back" data-goto="hub">‹ Volver</button>
 
       <div class="card profile">
-        <div class="avatar big" id="avatarBig">M</div>
+        <div class="avatar big photo" id="avatarBig"></div>
         <div class="field grow">
           <label for="profileName">Tu nombre</label>
           <input id="profileName" maxlength="30">
@@ -322,7 +320,7 @@
         </div>
       </div>
 
-      <p class="about"><span class="wordmark small">MAURIX</span><br>Hecha para Mauricio</p>
+      <p class="about"><img src="icons/logo-maurion.jpg" alt="MAURION" class="about-logo"><br>Hecha para Mauricio</p>
     </section>
   </main>
 

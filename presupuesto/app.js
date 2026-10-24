@@ -341,9 +341,6 @@ function renderHeader() {
   const h = new Date().getHours();
   $('#helloTime').textContent = h < 12 ? 'Buenos días ☀️' : h < 19 ? 'Buenas tardes 🌤️' : 'Buenas noches 🌙';
   $('#helloName').textContent = name;
-  const initial = (state.profile.name || '🙂').trim().charAt(0).toUpperCase();
-  $('#avatar').textContent = initial;
-  $('#avatarBig').textContent = initial;
 }
 
 function emptyItem(text) {
@@ -885,9 +882,9 @@ function icsEscape(s) {
 function buildIcs(ev) {
   const end = eventEnd(ev);
   const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MAURIX//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MAURION//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
     'BEGIN:VEVENT',
-    `UID:${uid()}@maurix`,
+    `UID:${uid()}@maurion`,
     `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')}`,
     ev.allDay ? `DTSTART;VALUE=DATE:${stampDate(ev.start)}` : `DTSTART:${stampLocal(ev.start)}`,
     ev.allDay ? `DTEND;VALUE=DATE:${stampDate(end)}` : `DTEND:${stampLocal(end)}`,
@@ -1569,7 +1566,7 @@ function download(filename, content, type) {
 }
 
 $('#exportJson').addEventListener('click', () => {
-  download(`maurix-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json');
+  download(`maurion-${todayIso()}.json`, JSON.stringify(state, null, 2), 'application/json');
 });
 
 $('#importJson').addEventListener('change', async e => {
