@@ -67,8 +67,9 @@
     <!-- ============ INICIO (HUB) ============ -->
     <section class="view active" id="view-hub">
       <p class="today-line" id="todayLine"></p>
+      <div class="day-strip" id="dayStrip"></div>
       <form class="quick-entry" autocomplete="off">
-        <input type="text" enterkeyhint="done" placeholder="✍️ Anota rápido: almuerzo 25 mil" aria-label="Registro rápido">
+        <input type="text" enterkeyhint="done" placeholder="✍️ Ej: almuerzo 25 mil" aria-label="Registro rápido">
         <button type="button" class="qe-mic" data-action="mic" aria-label="Dictar">🎙️</button>
         <button type="submit" class="qe-send" aria-label="Anotar">➤</button>
       </form>
@@ -97,6 +98,11 @@
           <span class="tile-name">Notas</span>
           <strong id="tileNotes">0</strong>
           <small>notas</small>
+        </button>
+        <button class="tile tile-wide" data-goto="utilidades">
+          <span class="tile-ico">🧰</span>
+          <span class="tile-wide-text"><span class="tile-name">Utilidades</span><small>Clima · Pico y placa · Vencimientos · Dividir cuenta · Dólar</small></span>
+          <span class="muted">›</span>
         </button>
       </div>
 
@@ -143,7 +149,7 @@
       <!-- Resumen -->
       <div class="subview active" id="fin-resumen">
         <form class="quick-entry" autocomplete="off">
-          <input type="text" enterkeyhint="done" placeholder="✍️ Anota rápido: almuerzo 25 mil" aria-label="Registro rápido">
+          <input type="text" enterkeyhint="done" placeholder="✍️ Ej: almuerzo 25 mil" aria-label="Registro rápido">
           <button type="button" class="qe-mic" data-action="mic" aria-label="Dictar">🎙️</button>
           <button type="submit" class="qe-send" aria-label="Anotar">➤</button>
         </form>
@@ -269,6 +275,72 @@
           </div>
         </div>
         <div id="remGroups"></div>
+      </div>
+    </section>
+
+    <!-- ============ UTILIDADES ============ -->
+    <section class="view" id="view-utilidades">
+      <button class="back" data-goto="hub">‹ Inicio</button>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>🌤️ Clima</h2>
+          <button class="chip-btn" data-action="pick-city" id="cityBtn">Elegir ciudad</button>
+        </div>
+        <div id="weatherBox"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>🚗 Pico y placa</h2>
+          <button class="chip-btn" data-action="pyp-setup">Configurar</button>
+        </div>
+        <div id="pypBox"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>📄 Vencimientos</h2>
+          <button class="chip-btn" data-action="add-doc">+ Agregar</button>
+        </div>
+        <p class="muted small">SOAT, tecnomecánica, licencia, pasaporte… Te avisamos antes de que se venzan.</p>
+        <ul class="list" id="docList"></ul>
+      </div>
+
+      <div class="card">
+        <h2>🍽️ Dividir cuenta</h2>
+        <div class="field-row mt">
+          <div class="field"><label for="splitTotal">Total de la cuenta</label><input id="splitTotal" inputmode="decimal" placeholder="$ 0"></div>
+          <div class="field"><label for="splitPeople">Personas</label><input id="splitPeople" type="number" min="1" inputmode="numeric" value="2"></div>
+        </div>
+        <div class="field">
+          <span class="field-label">Propina</span>
+          <div class="seg-pick" id="splitTip">
+            <label><input type="radio" name="tip" value="0">0%</label>
+            <label><input type="radio" name="tip" value="10" checked>10%</label>
+            <label><input type="radio" name="tip" value="15">15%</label>
+          </div>
+        </div>
+        <label class="switch-row">Redondear a los $1.000<input type="checkbox" id="splitRound" checked></label>
+        <div class="result-box" id="splitResult"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>💵 Dólar hoy (TRM)</h2>
+          <button class="chip-btn" data-action="refresh-trm">Actualizar</button>
+        </div>
+        <div id="trmBox"></div>
+        <div class="conv">
+          <div class="field"><label for="convAmount">Valor</label><input id="convAmount" inputmode="decimal" placeholder="100"></div>
+          <div class="field"><label for="convFrom">De</label>
+            <select id="convFrom"><option value="USD">🇺🇸 USD</option><option value="EUR">🇪🇺 EUR</option><option value="COP">🇨🇴 COP</option></select>
+          </div>
+          <div class="field"><label for="convTo">A</label>
+            <select id="convTo"><option value="COP">🇨🇴 COP</option><option value="USD">🇺🇸 USD</option><option value="EUR">🇪🇺 EUR</option></select>
+          </div>
+        </div>
+        <div class="result-box" id="convResult"></div>
       </div>
     </section>
 

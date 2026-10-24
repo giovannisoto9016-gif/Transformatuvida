@@ -59,6 +59,7 @@ function defaultState() {
     tasks: [],
     reminders: [],
     notes: [],
+    utils: { city: null, pyp: null, docs: [] },
     settings: { outlook: 'personal', rollover: true, badge: false },
     security: { pinHash: null, salt: null, credId: null, lockAfter: 1 },
   };
@@ -97,6 +98,7 @@ function normalizeState(s) {
   s.tasks = Array.isArray(s.tasks) ? s.tasks : [];
   s.reminders = Array.isArray(s.reminders) ? s.reminders : [];
   s.notes = Array.isArray(s.notes) ? s.notes : [];
+  s.utils = { city: null, pyp: null, docs: [], ...(s.utils || {}) };
   s.settings = { outlook: 'personal', rollover: true, badge: false, ...(s.settings || {}) };
   s.security = { pinHash: null, salt: null, credId: null, lockAfter: 1, ...(s.security || {}) };
   s.version = 3;
@@ -357,6 +359,7 @@ function render() {
   renderTasks();
   renderReminders();
   renderNotes();
+  renderUtils();
   renderAjustes();
   renderSecurity();
   const n = urgentCount();
@@ -945,6 +948,9 @@ function buildIcs(ev) {
   ];
   if (ev.notes) lines.push(`DESCRIPTION:${icsEscape(ev.notes)}`);
   if (RRULES[ev.repeat]) lines.push(`RRULE:${RRULES[ev.repeat]}`);
+  for (const min of ev.alarms || []) {
+    lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEscape(ev.title)}`, `TRIGGER:-PT${min}M`, 'END:VALARM');
+  }
   if (ev.alarm != null) {
     // En eventos de todo el día la alerta suena a las 9:00 de ese día.
     const trigger = ev.allDay ? 'PT9H' : `-PT${ev.alarm}M`;
@@ -1381,7 +1387,9 @@ function agendaUrgentCount() {
 }
 
 function renderHub() {
-  $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }));
+  const holiday = isHoliday(new Date()) ? ' · 🇨🇴 Festivo' : '';
+  $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })) + holiday;
+  renderDayStrip();
 
   const realMonth = monthKey(new Date());
   const m = getMonth(realMonth);
@@ -1843,6 +1851,422 @@ $('#rollover').addEventListener('change', e => {
   render();
 });
 
+/* ===================== Utilidades ===================== */
+
+const CITIES = [
+  ['Bogotá', 4.711, -74.0721], ['Medellín', 6.2442, -75.5812], ['Cali', 3.4516, -76.532],
+  ['Barranquilla', 10.9685, -74.7813], ['Cartagena', 10.391, -75.4794], ['Bucaramanga', 7.1193, -73.1227],
+  ['Pereira', 4.8133, -75.6961], ['Manizales', 5.0703, -75.5138], ['Armenia', 4.5339, -75.6811],
+  ['Cúcuta', 7.8939, -72.5078], ['Ibagué', 4.4389, -75.2322], ['Santa Marta', 11.2408, -74.199],
+  ['Villavicencio', 4.142, -73.6266], ['Pasto', 1.2136, -77.2811], ['Neiva', 2.9273, -75.2819],
+  ['Popayán', 2.4448, -76.6147], ['Palmira', 3.5394, -76.3036], ['Tuluá', 4.0847, -76.1954],
+  ['Buenaventura', 3.8801, -77.0312], ['Jamundí', 3.2610, -76.5390],
+];
+
+/* ----- Festivos de Colombia (Ley Emiliani) ----- */
+
+function easterSunday(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+
+const holidayCache = {};
+function colombianHolidays(y) {
+  if (holidayCache[y]) return holidayCache[y];
+  const set = new Set();
+  const add = d => set.add(isoDate(d));
+  const nextMonday = d => { const r = new Date(d); while (r.getDay() !== 1) r.setDate(r.getDate() + 1); return r; };
+  [[0, 1], [4, 1], [6, 20], [7, 7], [11, 8], [11, 25]].forEach(([m, d]) => add(new Date(y, m, d)));
+  [[0, 6], [2, 19], [5, 29], [7, 15], [9, 12], [10, 1], [10, 11]].forEach(([m, d]) => add(nextMonday(new Date(y, m, d))));
+  const e = easterSunday(y);
+  const plus = n => { const r = new Date(e); r.setDate(r.getDate() + n); return r; };
+  add(plus(-3)); add(plus(-2)); add(plus(43)); add(plus(64)); add(plus(71));
+  return (holidayCache[y] = set);
+}
+
+function isHoliday(d) {
+  return colombianHolidays(d.getFullYear()).has(isoDate(d));
+}
+
+/* ----- Clima (Open-Meteo, gratis y sin cuenta) ----- */
+
+const WEATHER_KEY = 'maurion.weather';
+const WMO = [
+  [[0], '☀️', 'Despejado'], [[1, 2], '🌤️', 'Parcialmente nublado'], [[3], '☁️', 'Nublado'],
+  [[45, 48], '🌫️', 'Neblina'], [[51, 53, 55, 56, 57], '🌦️', 'Llovizna'], [[61, 63, 65, 66, 67], '🌧️', 'Lluvia'],
+  [[71, 73, 75, 77, 85, 86], '🌨️', 'Nieve'], [[80, 81, 82], '🌧️', 'Aguaceros'], [[95, 96, 99], '⛈️', 'Tormenta'],
+];
+function wmo(code) {
+  const w = WMO.find(x => x[0].includes(code));
+  return w ? { icon: w[1], text: w[2] } : { icon: '🌡️', text: '' };
+}
+
+let weather = null;
+try { weather = JSON.parse(localStorage.getItem(WEATHER_KEY)); } catch { weather = null; }
+
+async function loadWeather(force) {
+  const c = state.utils.city;
+  if (!c) return;
+  const fresh = weather && weather.city === c.name && Date.now() - weather.at < 30 * 60000;
+  if (fresh && !force) return;
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lon}` +
+      '&current=temperature_2m,weather_code,apparent_temperature' +
+      '&hourly=precipitation_probability&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+      '&timezone=auto&forecast_days=1';
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    weather = { city: c.name, at: Date.now(), data: j };
+    try { localStorage.setItem(WEATHER_KEY, JSON.stringify(weather)); } catch { /* sin espacio */ }
+    renderUtils();
+    renderHub();
+  } catch {
+    if (force) toast('No se pudo cargar el clima. Revisa tu conexión.');
+  }
+}
+
+function weatherSummary() {
+  if (!weather || !state.utils.city || weather.city !== state.utils.city.name) return null;
+  const j = weather.data;
+  const w = wmo(j.current.weather_code);
+  // Primera hora desde ahora con probabilidad de lluvia ≥ 50 %
+  const nowH = new Date().getHours();
+  let rainAt = null;
+  (j.hourly?.time || []).forEach((t, i) => {
+    const h = Number(t.slice(11, 13));
+    if (rainAt == null && h >= nowH && j.hourly.precipitation_probability[i] >= 50) rainAt = h;
+  });
+  return {
+    icon: w.icon, text: w.text,
+    temp: Math.round(j.current.temperature_2m),
+    feels: Math.round(j.current.apparent_temperature),
+    max: Math.round(j.daily.temperature_2m_max[0]),
+    min: Math.round(j.daily.temperature_2m_min[0]),
+    rain: j.daily.precipitation_probability_max[0],
+    rainAt,
+  };
+}
+
+function rainHint(w) {
+  if (w.rainAt != null) return `☂️ Lleva sombrilla: lluvia probable desde las ${timeLabel(pad2(w.rainAt) + ':00')}`;
+  if (w.rain >= 40) return `☂️ Posible lluvia hoy (${w.rain}%)`;
+  return '😎 Sin lluvia a la vista';
+}
+
+function cityPicker() {
+  openSheet({
+    title: '¿En qué ciudad estás?',
+    body: `<button type="button" class="btn soft full" data-geo style="margin-bottom:12px">📍 Usar mi ubicación actual</button>
+      <div class="ob-options">${CITIES.map(([n], i) => `<button type="button" data-city="${i}" class="${state.utils.city?.name === n ? 'on' : ''}">${esc(n)}</button>`).join('')}</div>`,
+  });
+  sheet.querySelector('#sheetBody').addEventListener('click', e => {
+    const b = e.target.closest('[data-city]');
+    if (b) {
+      const [name, lat, lon] = CITIES[b.dataset.city];
+      return setCity({ name, lat, lon });
+    }
+    if (e.target.closest('[data-geo]')) {
+      if (!navigator.geolocation) return toast('Tu celular no permite ubicación aquí');
+      navigator.geolocation.getCurrentPosition(
+        pos => setCity({ name: 'Mi ubicación', lat: +pos.coords.latitude.toFixed(3), lon: +pos.coords.longitude.toFixed(3) }),
+        () => toast('No diste permiso de ubicación. Elige tu ciudad de la lista.'),
+        { timeout: 10000 },
+      );
+    }
+  });
+}
+
+function setCity(c) {
+  state.utils.city = c;
+  saveState();
+  closeSheet();
+  render();
+  loadWeather(true);
+}
+
+/* ----- Pico y placa ----- */
+
+const WEEKDAYS = [[1, 'Lun'], [2, 'Mar'], [3, 'Mié'], [4, 'Jue'], [5, 'Vie'], [6, 'Sáb']];
+
+function pypToday(d = new Date()) {
+  const p = state.utils.pyp;
+  if (!p) return null;
+  if (d.getDay() === 0) return { has: false, why: 'Domingo' };
+  if (isHoliday(d)) return { has: false, why: 'Festivo' };
+  let has;
+  if (p.mode === 'par') has = d.getDate() % 2 === 0;
+  else if (p.mode === 'impar') has = d.getDate() % 2 === 1;
+  else has = (p.days || []).includes(d.getDay());
+  return { has, why: '' };
+}
+
+function nextPyp() {
+  const d = new Date();
+  for (let i = 1; i <= 14; i++) {
+    d.setDate(d.getDate() + 1);
+    if (pypToday(d)?.has) return new Date(d);
+  }
+  return null;
+}
+
+function pypForm() {
+  const p = state.utils.pyp || { mode: 'semana', days: [], hours: '6:00–9:00 y 16:00–19:00', plate: '', vehicle: 'Carro' };
+  openSheet({
+    title: 'Pico y placa',
+    body: `<p class="muted small" style="margin:0 0 12px">Configúralo según la regla vigente de tu ciudad (cambia cada cierto tiempo; la puedes editar cuando quieras). Domingos y festivos no aplica.</p>` +
+      `<div class="field-row">` +
+        field('Vehículo', `<select name="vehicle">${['Carro', 'Moto', 'Taxi'].map(v => `<option${v === p.vehicle ? ' selected' : ''}>${v}</option>`).join('')}</select>`) +
+        field('Placa (opcional)', `<input name="plate" maxlength="7" placeholder="ABC123" value="${esc(p.plate)}" style="text-transform:uppercase">`) +
+      `</div>` +
+      `<div class="field"><span class="field-label">¿Cuándo tienes pico y placa?</span><div class="seg-pick">` +
+        [['semana', 'Días fijos'], ['par', 'Días pares'], ['impar', 'Días impares']].map(([v, l]) =>
+          `<label><input type="radio" name="mode" value="${v}"${p.mode === v ? ' checked' : ''}>${l}</label>`).join('') +
+      `</div></div>` +
+      `<div class="field" id="pypDays"><span class="field-label">Días de la semana</span><div class="seg-pick days">` +
+        WEEKDAYS.map(([v, l]) => `<label><input type="checkbox" name="day${v}"${(p.days || []).includes(v) ? ' checked' : ''}>${l}</label>`).join('') +
+      `</div></div>` +
+      field('Horario', `<input name="hours" maxlength="60" placeholder="6:00–9:00 y 16:00–19:00" value="${esc(p.hours)}">`),
+    extra: state.utils.pyp ? [{ label: 'Quitar pico y placa', onClick: () => { state.utils.pyp = null; saveState(); closeSheet(); render(); } }] : [],
+    onSubmit: d => {
+      const days = WEEKDAYS.map(([v]) => v).filter(v => d['day' + v]);
+      if (d.mode === 'semana' && !days.length) return toast('Elige al menos un día'), false;
+      state.utils.pyp = { mode: d.mode, days, hours: d.hours.trim(), plate: d.plate.trim().toUpperCase(), vehicle: d.vehicle };
+      toast('Pico y placa guardado 🚗');
+    },
+  });
+  const sync = () => { $('#pypDays').hidden = $('#sheetForm').mode.value !== 'semana'; };
+  sheet.querySelectorAll('[name="mode"]').forEach(r => r.addEventListener('change', sync));
+  sync();
+}
+
+/* ----- Vencimientos de documentos ----- */
+
+const DOC_PRESETS = [['🛡️', 'SOAT'], ['🔧', 'Tecnomecánica'], ['🪪', 'Licencia de conducción'], ['🛂', 'Pasaporte'], ['📑', 'Póliza / seguro'], ['🧾', 'Impuesto vehicular']];
+
+function docStatus(doc) {
+  const diff = dayDiff(parseIso(doc.date));
+  if (diff < 0) return { cls: 'late', text: `Vencido hace ${-diff} día${diff === -1 ? '' : 's'}`, diff };
+  if (diff === 0) return { cls: 'late', text: 'Vence hoy', diff };
+  if (diff <= 30) return { cls: 'soon', text: `Vence en ${diff} día${diff === 1 ? '' : 's'}`, diff };
+  return { cls: 'ok', text: `Vigente · ${formatDate(doc.date)} ${doc.date.slice(0, 4)}`, diff };
+}
+
+function docEvent(doc) {
+  return {
+    title: `${doc.emoji} Vence ${doc.name}`,
+    notes: doc.notes || '',
+    start: dateTime(doc.date, '09:00'),
+    minutes: 30,
+    alarms: [30 * 1440, 7 * 1440],
+    alarm: 0,
+    repeat: 'none',
+  };
+}
+
+function docForm(item) {
+  const v = item || { emoji: '🛡️', name: '', date: '', notes: '' };
+  openSheet({
+    title: item ? 'Editar vencimiento' : 'Nuevo vencimiento',
+    body: (item ? '' : `<div class="presets">${DOC_PRESETS.map(([e, n], i) => `<button type="button" class="chip" data-doc="${i}">${e} ${esc(n)}</button>`).join('')}</div>`) +
+      field('Documento', `<input name="name" class="big-input" maxlength="60" placeholder="SOAT del carro" required value="${esc(v.name)}">`) +
+      field('Fecha de vencimiento', `<input name="date" type="date" required value="${esc(v.date)}">`) +
+      field('Notas', `<input name="notes" maxlength="120" placeholder="Placa, número de póliza…" value="${esc(v.notes)}">`) +
+      `<input type="hidden" name="emoji" value="${esc(v.emoji)}">` +
+      (item ? '' : `<label class="switch-row">📅 Pasarlo a mi calendario (aviso 30 y 7 días antes)<input type="checkbox" name="addCal" checked></label>`),
+    saveLabel: item ? 'Guardar' : 'Agregar',
+    extra: item ? [{ label: '📅 Agregar al calendario', onClick: () => calendarChooser(docEvent(item)) }] : [],
+    onSubmit: d => {
+      const name = d.name.trim();
+      if (!name || !d.date) return toast('Escribe el documento y la fecha'), false;
+      const data = { name, date: d.date, notes: d.notes.trim(), emoji: d.emoji || '📄' };
+      let doc = item;
+      if (doc) Object.assign(doc, data);
+      else {
+        doc = { id: uid(), ...data };
+        state.utils.docs.push(doc);
+      }
+      toast('Vencimiento guardado');
+      if (d.addCal) afterSheet = () => calendarChooser(docEvent(doc));
+    },
+    onDelete: item && (() => {
+      state.utils.docs = state.utils.docs.filter(x => x.id !== item.id);
+      toast('Vencimiento eliminado');
+    }),
+  });
+  sheet.querySelector('.presets')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-doc]');
+    if (!b) return;
+    const [emoji, name] = DOC_PRESETS[b.dataset.doc];
+    const f = $('#sheetForm');
+    f.name.value = name;
+    f.emoji.value = emoji;
+    sheet.querySelectorAll('[data-doc]').forEach(x => x.classList.toggle('on', x === b));
+    f.date.focus();
+  });
+}
+
+/* ----- Dividir cuenta ----- */
+
+function splitCalc() {
+  const total = parseAmount($('#splitTotal').value) || 0;
+  const people = Math.max(1, parseInt($('#splitPeople').value, 10) || 1);
+  const tip = Number(document.querySelector('#splitTip input:checked')?.value || 0);
+  const withTip = total * (1 + tip / 100);
+  let each = withTip / people;
+  if ($('#splitRound').checked) each = Math.ceil(each / 1000) * 1000;
+  return { total, people, tip, withTip, each };
+}
+
+function renderSplit() {
+  const r = splitCalc();
+  $('#splitResult').innerHTML = r.total
+    ? `<span class="muted small">Total con propina: ${money(Math.round(r.withTip))}</span>
+       <strong>${money(Math.round(r.each))} <small>por persona</small></strong>
+       <button class="chip-btn" data-action="split-save">Registrar mi parte como gasto</button>`
+    : '<span class="muted small">Escribe el total para calcular.</span>';
+}
+
+function saveSplitExpense() {
+  const r = splitCalc();
+  if (!r.total) return;
+  const item = { id: uid(), amount: Math.round(r.each), categoryId: 'comida', note: 'Cuenta dividida', date: todayIso(), plannedId: null, createdAt: Date.now() };
+  getMonth(monthKey(new Date()), true).expenses.push(item);
+  saveState();
+  render();
+  toast(`🍔 Registrado: ${money(item.amount)}`);
+}
+
+['#splitTotal', '#splitPeople', '#splitRound'].forEach(sel => $(sel).addEventListener('input', renderSplit));
+$('#splitTip').addEventListener('change', renderSplit);
+
+/* ----- Dólar (TRM oficial) y conversor ----- */
+
+const RATES_KEY = 'maurion.rates';
+let rates = null;
+try { rates = JSON.parse(localStorage.getItem(RATES_KEY)); } catch { rates = null; }
+
+async function loadRates(force) {
+  const fresh = rates && Date.now() - rates.at < 6 * 3600000;
+  if (fresh && !force) return;
+  try {
+    // TRM oficial (Superintendencia Financiera) en datos abiertos de Colombia
+    const r = await fetch('https://www.datos.gov.co/resource/32sa-8pi3.json?$limit=2&$order=vigenciadesde%20DESC');
+    if (!r.ok) throw new Error(r.status);
+    const rows = await r.json();
+    const trm = parseFloat(rows[0].valor);
+    const prev = rows[1] ? parseFloat(rows[1].valor) : null;
+    let eurUsd = rates?.eurUsd || null;
+    try {
+      // Euro: tasa de referencia del mercado (frente al dólar)
+      const fx = await (await fetch('https://open.er-api.com/v6/latest/USD')).json();
+      if (fx?.rates?.EUR) eurUsd = 1 / fx.rates.EUR;
+    } catch { /* se mantiene el último valor */ }
+    rates = { at: Date.now(), trm, prev, since: rows[0].vigenciadesde, eurUsd };
+    try { localStorage.setItem(RATES_KEY, JSON.stringify(rates)); } catch { /* sin espacio */ }
+    renderUtils();
+    if (force) toast('Dólar actualizado');
+  } catch {
+    if (force) toast('No se pudo cargar la TRM. Revisa tu conexión.');
+  }
+}
+
+function copPer(code) {
+  if (!rates) return null;
+  if (code === 'COP') return 1;
+  if (code === 'USD') return rates.trm;
+  if (code === 'EUR') return rates.eurUsd ? rates.trm * rates.eurUsd : null;
+  return null;
+}
+
+function renderConv() {
+  const amount = parseAmount($('#convAmount').value);
+  const from = copPer($('#convFrom').value), to = copPer($('#convTo').value);
+  if (!amount) return ($('#convResult').innerHTML = '<span class="muted small">Escribe un valor para convertir.</span>');
+  if (!from || !to) return ($('#convResult').innerHTML = '<span class="muted small">Aún no hay tasas cargadas.</span>');
+  const val = (amount * from) / to;
+  const code = $('#convTo').value;
+  const fmt = new Intl.NumberFormat(code === 'COP' ? 'es-CO' : 'es', { style: 'currency', currency: code, maximumFractionDigits: code === 'COP' ? 0 : 2 });
+  $('#convResult').innerHTML = `<strong>${fmt.format(val)}</strong>`;
+}
+
+['#convAmount', '#convFrom', '#convTo'].forEach(sel => $(sel).addEventListener('input', renderConv));
+
+/* ----- Render de utilidades y franja de Inicio ----- */
+
+function renderUtils() {
+  // Clima
+  const c = state.utils.city;
+  $('#cityBtn').textContent = c ? `📍 ${c.name}` : 'Elegir ciudad';
+  const w = weatherSummary();
+  $('#weatherBox').innerHTML = !c
+    ? '<p class="muted small">Elige tu ciudad para ver el clima de hoy.</p>'
+    : !w ? '<p class="muted small">Cargando clima…</p>'
+    : `<div class="weather">
+        <span class="w-icon">${w.icon}</span>
+        <div><strong class="w-temp">${w.temp}°</strong><span class="muted small"> Sensación ${w.feels}°</span><br>
+        <span>${esc(w.text)} · Máx ${w.max}° · Mín ${w.min}°</span></div>
+      </div>
+      <p class="w-hint">${esc(rainHint(w))}</p>`;
+
+  // Pico y placa
+  const p = state.utils.pyp;
+  const t = pypToday();
+  if (!p) {
+    $('#pypBox').innerHTML = '<p class="muted small">Configura tus días y te avisamos en Inicio si hoy tienes pico y placa.</p>';
+  } else {
+    const nxt = nextPyp();
+    $('#pypBox').innerHTML = `<div class="pyp ${t.has ? 'on' : 'off'}">
+        <span class="pyp-icon">${t.has ? '⛔' : '✅'}</span>
+        <div><strong>${t.has ? 'Hoy tienes pico y placa' : t.why ? `Hoy no aplica (${t.why.toLowerCase()})` : 'Hoy puedes circular'}</strong>
+        <div class="muted small">${esc(p.vehicle)}${p.plate ? ' ' + esc(p.plate) : ''}${t.has && p.hours ? ' · ' + esc(p.hours) : ''}</div></div>
+      </div>
+      ${nxt ? `<p class="muted small" style="margin:10px 0 0">Próximo: ${esc(capitalize(nxt.toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })))}</p>` : ''}`;
+  }
+
+  // Vencimientos
+  const docs = [...state.utils.docs].sort((a, b) => a.date.localeCompare(b.date));
+  $('#docList').innerHTML = docs.length ? docs.map(doc => {
+    const st = docStatus(doc);
+    return `<li>
+      <span class="ico" style="--c:var(--accent)">${esc(doc.emoji)}</span>
+      <div class="item-main" data-action="edit-doc" data-id="${esc(doc.id)}">
+        <div class="item-title">${esc(doc.name)}</div>
+        <div class="item-sub"><span class="status ${st.cls}">${esc(st.text)}</span>${doc.notes ? esc(doc.notes) : ''}</div>
+      </div>
+    </li>`;
+  }).join('') : emptyItem('Agrega tu SOAT, licencia o pasaporte.');
+
+  // Dividir cuenta y dólar
+  renderSplit();
+  $('#trmBox').innerHTML = rates
+    ? `<div class="trm"><strong>${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 2 }).format(rates.trm)}</strong>
+        ${rates.prev ? `<span class="${rates.trm >= rates.prev ? 'neg' : 'pos'}">${rates.trm >= rates.prev ? '▲' : '▼'} ${Math.abs(rates.trm - rates.prev).toFixed(2)}</span>` : ''}
+        <div class="muted small">TRM oficial vigente desde ${esc(formatDate(rates.since.slice(0, 10)))}${rates.eurUsd ? ` · Euro ≈ ${money(Math.round(rates.trm * rates.eurUsd))}` : ''}</div></div>`
+    : '<p class="muted small">Cargando el dólar de hoy…</p>';
+  renderConv();
+}
+
+function renderDayStrip() {
+  const chips = [];
+  const w = weatherSummary();
+  if (w) chips.push(`<button class="strip-chip" data-goto="utilidades">${w.icon} ${w.temp}° · ${esc(w.rainAt != null || w.rain >= 40 ? '☂️ lluvia' : w.text.toLowerCase())}</button>`);
+  else if (!state.utils.city) chips.push('<button class="strip-chip" data-action="pick-city">🌤️ Ver el clima</button>');
+  const t = pypToday();
+  if (t) chips.push(`<button class="strip-chip ${t.has ? 'warn' : ''}" data-goto="utilidades">${t.has ? '⛔ Hoy tienes pico y placa' : '🚗 Hoy puedes circular'}</button>`);
+  const due = state.utils.docs.map(d => ({ d, st: docStatus(d) })).filter(x => x.st.diff <= 30).sort((a, b) => a.st.diff - b.st.diff)[0];
+  if (due) chips.push(`<button class="strip-chip warn" data-goto="utilidades">${esc(due.d.emoji)} ${esc(due.d.name)}: ${esc(due.st.text.toLowerCase())}</button>`);
+  if (rates) chips.push(`<button class="strip-chip" data-goto="utilidades">💵 ${money(Math.round(rates.trm))}</button>`);
+  $('#dayStrip').innerHTML = chips.join('');
+  $('#dayStrip').hidden = !chips.length;
+}
+
+loadWeather();
+loadRates();
+
 /* ===================== Bienvenida ===================== */
 
 function startOnboarding() {
@@ -1935,6 +2359,12 @@ document.addEventListener('click', e => {
     case 'edit-reminder': return reminderForm(state.reminders.find(x => x.id === id));
     case 'preset-outlook': return reminderForm(null, PRESETS[0]);
     case 'add-note': return noteForm(null);
+    case 'pick-city': return cityPicker();
+    case 'pyp-setup': return pypForm();
+    case 'add-doc': return docForm(null);
+    case 'edit-doc': return docForm(state.utils.docs.find(x => x.id === id));
+    case 'refresh-trm': return loadRates(true);
+    case 'split-save': return saveSplitExpense();
     case 'edit-note': return noteForm(state.notes.find(x => x.id === id));
     case 'add-expense': return expenseForm(null);
     case 'edit-expense': return expenseForm(m.expenses.find(x => x.id === id));
@@ -2063,7 +2493,11 @@ $('#resetAll').addEventListener('click', () => {
 
 // Al volver a la app (por ejemplo, al día siguiente) se actualizan saludo y recordatorios.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') render();
+  if (document.visibilityState === 'visible') {
+    render();
+    loadWeather();
+    loadRates();
+  }
 });
 
 render();
