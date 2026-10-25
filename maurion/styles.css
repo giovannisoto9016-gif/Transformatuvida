@@ -907,3 +907,4 @@ textarea { resize: none; min-height: 140px; line-height: 1.5; }
 .fx-table td.best { color: var(--income); }
 .fx-table tr:last-child td, .fx-table tr:last-child th { border-bottom: 0; }
 .fx-foot { text-align: center; margin: 0; }
+.fx-warn { border-color: color-mix(in srgb, var(--warn) 60%, var(--border)); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); font-size: 0.88rem; line-height: 1.45; }

@@ -2600,9 +2600,12 @@ function fxErrorText(e) {
 
 async function fxLastFixtures(team, progress) {
   const c = fxCache.teams[team.id];
-  if (c && Date.now() - c.at < 6 * 3600000) return c.list;
+  if (c && Date.now() - c.at < 6 * 3600000) return Object.assign(c.list, { oldSeason: c.oldSeason || null });
   let list;
+  let oldSeason = null;
   try {
+    // Si ya sabemos que el plan no da temporadas recientes, no gastamos consultas probando.
+    if (fxCache.planMax) throw Object.assign(new Error(`try from ${fxCache.planMax - 2} to ${fxCache.planMax}`), { plan: true, known: true });
     list = await fxGet('/fixtures', { team: team.id, last: 12 }, progress.wait);
   } catch (e) {
     if (!e.plan) throw e;
@@ -2610,11 +2613,23 @@ async function fxLastFixtures(team, progress) {
     const y = new Date().getFullYear();
     list = [];
     let lastErr = e;
-    for (const season of [y, y - 1]) {
+    for (const season of e.known ? [] : [y, y - 1]) {
       try {
         list = list.concat(await fxGet('/fixtures', { team: team.id, season }, progress.wait));
       } catch (err) { lastErr = err; }
       if (list.filter(f => FINISHED.includes(f.fixture.status.short)).length >= 10) break;
+    }
+    // El plan gratis solo permite algunas temporadas ("try from 2022 to 2024"): se usa la más reciente permitida.
+    const allowed = !list.length && /(\d{4})\s*to\s*(\d{4})/i.exec(lastErr.message);
+    if (allowed) {
+      oldSeason = Number(allowed[2]);
+      fxCache.planMax = oldSeason;
+      for (const season of [oldSeason, oldSeason - 1]) {
+        try {
+          list = list.concat(await fxGet('/fixtures', { team: team.id, season }, progress.wait));
+        } catch (err) { lastErr = err; }
+        if (list.filter(f => FINISHED.includes(f.fixture.status.short)).length >= 10) break;
+      }
     }
     if (!list.length) throw lastErr;
   }
@@ -2627,7 +2642,8 @@ async function fxLastFixtures(team, progress) {
       away: { id: f.teams.away.id, name: f.teams.away.name, logo: f.teams.away.logo },
       gh: f.goals.home, ga: f.goals.away,
     }));
-  fxCache.teams[team.id] = { at: Date.now(), list };
+  list.oldSeason = oldSeason;
+  fxCache.teams[team.id] = { at: Date.now(), list, oldSeason };
   fxSave();
   return list;
 }
@@ -2721,7 +2737,7 @@ async function fxRun() {
     total = done + missing.length;
     for (const id of missing) await fxStats(id, progress);
     const split = $('#fxSplit').checked;
-    renderFx(fxAnalyze(fxSel.home, fh, split ? 'home' : null), fxAnalyze(fxSel.away, fa, split ? 'away' : null), split);
+    renderFx(fxAnalyze(fxSel.home, fh, split ? 'home' : null), fxAnalyze(fxSel.away, fa, split ? 'away' : null), split, fh.oldSeason || fa.oldSeason);
     $('#fxMsg').textContent = fxCalls ? `Listo. Usaste ${fxCalls} consulta${fxCalls === 1 ? '' : 's'} de API-Football.` : 'Listo (datos guardados, sin gastar consultas).';
   } catch (e) {
     $('#fxMsg').textContent = fxErrorText(e);
@@ -2735,7 +2751,7 @@ function fmt1(v, suffix = '') {
   return v == null ? '—' : v.toLocaleString('es-CO', { maximumFractionDigits: 1 }) + suffix;
 }
 
-function renderFx(A, B, split) {
+function renderFx(A, B, split, oldSeason) {
   const logo = t => `<img src="${esc(t.logo)}" alt="" class="fx-logo" loading="lazy">`;
   const row = (label, a, b, suffix = '', higherIsBetter = true) => {
     const best = a == null || b == null || a === b ? '' : (a > b) === higherIsBetter ? 'a' : 'b';
@@ -2749,10 +2765,11 @@ function renderFx(A, B, split) {
   const matches = X => X.rows.map(r => `<li>
       <span class="fx-form ${r.res}">${r.res}</span>
       <div class="item-main"><div class="item-title">${r.isHome ? 'vs' : '@'} ${esc(r.opp.name)} · ${r.gf}-${r.ga}</div>
-      <div class="item-sub">${esc(new Date(r.f.ts * 1000).toLocaleDateString('es', { day: 'numeric', month: 'short', year: '2-digit' }))} · ${esc(r.f.league)}${r.mine && r.theirs ? ` · 🚩 ${r.mine.corners}-${r.theirs.corners} · 🟨 ${r.mine.yellow + r.mine.red}-${r.theirs.yellow + r.theirs.red}` : ' · sin estadísticas'}</div></div>
+      <div class="item-sub">${esc(new Date(r.f.ts * 1000).toLocaleDateString('es', { day: 'numeric', month: 'short', year: 'numeric' }))} · ${esc(r.f.league)}${r.mine && r.theirs ? ` · 🚩 ${r.mine.corners}-${r.theirs.corners} · 🟨 ${r.mine.yellow + r.mine.red}-${r.theirs.yellow + r.theirs.red}` : ' · sin estadísticas'}</div></div>
     </li>`).join('');
 
-  $('#fxOut').innerHTML = `
+  $('#fxOut').innerHTML = (oldSeason ? `
+    <div class="card fx-warn">⚠️ <strong>Datos de la temporada ${oldSeason}.</strong> El plan gratis de API-Football no incluye temporadas recientes, así que estos no son los últimos partidos reales. Para datos actuales necesitas un plan pago (desde unos USD 19/mes).</div>` : '') + `
     <div class="card fx-card">
       <div class="fx-head">
         <div>${logo(A.team)}<strong>${esc(A.team.name)}</strong><div class="fx-forms">${form(A)}</div></div>
@@ -2880,6 +2897,10 @@ function fxSaveKey(value) {
   const k = String(value || '').trim();
   if (k.length < 20) return toast('Esa clave parece incompleta');
   try { localStorage.setItem(FX_KEY, k); } catch { return toast('No se pudo guardar la clave'); }
+  // Clave nueva (o plan nuevo): se vuelve a averiguar qué temporadas permite.
+  fxCache.planMax = null;
+  fxCache.teams = {};
+  fxSave();
   $('#fxKeyInput').value = '';
   renderFxPicker();
   toast('Clave guardada 🔑');
@@ -3169,7 +3190,7 @@ goto('hub');
 if (!state.profile.onboarded) startOnboarding();
 else showLock();
 
-const APP_VERSION = '15';
+const APP_VERSION = '16';
 $('#appVersion').textContent = 'Versión ' + APP_VERSION;
 
 // Borra la caché y recarga para traer la última versión publicada.
