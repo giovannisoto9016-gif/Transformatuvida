@@ -66,60 +66,57 @@
   <main>
     <!-- ============ INICIO (HUB) ============ -->
     <section class="view active" id="view-hub">
-      <p class="today-line" id="todayLine"></p>
-      <div class="day-strip" id="dayStrip"></div>
+      <div class="home-hero" data-goto="finanzas">
+        <span class="hh-date" id="todayLine"></span>
+        <span class="hh-label">Tu dinero hoy</span>
+        <strong class="hh-total" id="hhTotal">$0</strong>
+        <div class="hh-row">
+          <div><small>Disponible del mes</small><b id="hhAvail">$0</b></div>
+          <div><small>Gastado del mes</small><b id="hhSpent">$0</b></div>
+          <div><small>Debes en tarjetas</small><b id="hhDebt">$0</b></div>
+        </div>
+        <div class="hh-bar"><div id="hhBar"></div></div>
+        <small class="hh-note" id="hhNote"></small>
+      </div>
+
+      <div class="quick-actions">
+        <button data-action="quick" data-kind="gasto"><span>🧾</span>Gasto</button>
+        <button data-action="quick" data-kind="ingreso"><span>💰</span>Ingreso</button>
+        <button data-action="quick" data-kind="tarea"><span>✅</span>Tarea</button>
+        <button data-action="quick" data-kind="recordatorio"><span>🔔</span>Recordar</button>
+        <button data-action="quick" data-kind="tanqueo"><span>⛽</span>Tanqueo</button>
+        <button data-action="quick" data-kind="mover"><span>↔️</span>Mover</button>
+        <button data-action="quick" data-kind="nota"><span>📝</span>Nota</button>
+      </div>
+
       <form class="quick-entry" autocomplete="off">
-        <input type="text" enterkeyhint="done" placeholder="✍️ Ej: almuerzo 25 mil" aria-label="Registro rápido">
+        <input type="text" enterkeyhint="done" placeholder="✍️ Ej: almuerzo 25 mil nequi" aria-label="Registro rápido">
         <button type="button" class="qe-mic" data-action="mic" aria-label="Dictar">🎙️</button>
         <button type="submit" class="qe-send" aria-label="Anotar">➤</button>
       </form>
 
-      <div class="tiles">
-        <button class="tile tile-fin" data-goto="finanzas">
-          <span class="tile-ico">💰</span>
-          <span class="tile-name">Finanzas</span>
-          <strong id="tileFin">$0</strong>
-          <small>disponible</small>
-        </button>
-        <button class="tile" data-goto="agenda" data-sub="tareas">
-          <span class="tile-ico">✅</span>
-          <span class="tile-name">Tareas</span>
-          <strong id="tileTasks">0</strong>
-          <small id="tileTasksSub">pendientes</small>
-        </button>
-        <button class="tile" data-goto="agenda" data-sub="recordatorios">
-          <span class="tile-ico">🔔</span>
-          <span class="tile-name">Recordatorios</span>
-          <strong id="tileRem">—</strong>
-          <small id="tileRemSub">próximo</small>
-        </button>
-        <button class="tile" data-goto="notas">
-          <span class="tile-ico">📝</span>
-          <span class="tile-name">Notas</span>
-          <strong id="tileNotes">0</strong>
-          <small>notas</small>
-        </button>
-        <button class="tile tile-wide" data-goto="utilidades">
-          <span class="tile-ico">🚗</span>
-          <span class="tile-wide-text"><span class="tile-name">Vehículos</span><small>Tanqueos y consumo · SOAT · Tecnomecánica · Impuesto</small></span>
-          <span class="muted">›</span>
-        </button>
-      </div>
+      <div class="day-strip" id="dayStrip"></div>
 
       <div class="card">
         <div class="card-head">
-          <h2>📅 Para hoy</h2>
-          <button class="link" data-goto="agenda" data-sub="tareas">Ver agenda</button>
+          <h2>📅 Hoy</h2>
+          <span class="muted small" id="hubTodayCount"></span>
         </div>
         <ul class="list" id="hubToday"></ul>
       </div>
 
-      <div class="card" id="hubPaysCard">
+      <div class="card" id="hubMonthCard">
         <div class="card-head">
-          <h2>💳 Próximos pagos</h2>
-          <button class="link" data-goto="finanzas" data-sub="presupuesto">Ver todos</button>
+          <h2>📊 En qué va tu mes</h2>
+          <button class="link" data-goto="finanzas" data-sub="analisis">Ver análisis</button>
         </div>
-        <ul class="list" id="hubPays"></ul>
+        <ul class="hub-cats" id="hubCats"></ul>
+      </div>
+
+      <div class="shortcuts">
+        <button class="shortcut" data-goto="agenda" data-sub="tareas"><span>🗓️</span><strong>Agenda</strong><small id="scAgenda"></small></button>
+        <button class="shortcut" data-goto="notas"><span>📝</span><strong>Notas</strong><small id="scNotes"></small></button>
+        <button class="shortcut" data-goto="utilidades"><span>🚗</span><strong>Vehículos</strong><small id="scVeh"></small></button>
       </div>
 
       <div class="card" id="hubNotesCard">

@@ -1704,43 +1704,65 @@ function renderHub() {
   $('#todayLine').textContent = capitalize(new Date().toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' }));
   renderDayStrip();
 
+  // Dinero
   const realMonth = monthKey(new Date());
   const m = getMonth(realMonth);
-  $('#tileFin').textContent = moneyShort(totals(m, realMonth).available);
+  const t = totals(m, realMonth);
+  const cashAccounts = state.accounts.filter(a => a.type !== 'credito');
+  const total = sum(cashAccounts, a => accountBalance(a));
+  const debt = cardDebt();
+  $('#hhTotal').textContent = money(total);
+  $('#hhAvail').textContent = moneyShort(t.available);
+  $('#hhSpent').textContent = moneyShort(t.spent);
+  $('#hhDebt').textContent = moneyShort(debt);
+  const pct = t.income > 0 ? Math.round((t.spent / t.income) * 100) : 0;
+  $('#hhBar').style.width = Math.min(pct, 100) + '%';
+  $('#hhNote').textContent = t.income > 0
+    ? `Has usado el ${pct}% de tus ingresos de ${monthName(realMonth)}`
+    : 'Agrega tus ingresos del mes en Finanzas → Presupuesto';
 
-  const pending = state.tasks.filter(t => !t.done);
-  const todayTasks = pending.filter(t => ['late', 'today'].includes(taskBucket(t)));
-  $('#tileTasks').textContent = pending.length;
-  $('#tileTasksSub').textContent = todayTasks.length ? `${todayTasks.length} para hoy` : 'pendientes';
-
-  const upcoming = state.reminders.filter(r => !r.done)
-    .map(r => ({ r, when: nextOccurrence(r) }))
-    .filter(x => x.when >= new Date() || dayDiff(x.when) === 0)
-    .sort((a, b) => a.when - b.when);
-  $('#tileRem').textContent = upcoming.length ? upcoming[0].r.title : '—';
-  $('#tileRemSub').textContent = upcoming.length ? `${relDay(upcoming[0].when)} ${timeLabel(upcoming[0].r.time)}` : 'sin próximos';
-  $('#tileNotes').textContent = state.notes.length;
-
-  // Para hoy: tareas atrasadas/de hoy y recordatorios de hoy
-  const todayRems = upcoming.filter(x => dayDiff(x.when) === 0).map(x => x.r);
-  const rows = [...todayTasks.sort((a, b) => (a.time || '99').localeCompare(b.time || '99')).map(taskItem), ...todayRems.map(reminderItem)];
-  $('#hubToday').innerHTML = rows.length ? rows.join('') : emptyItem('Nada pendiente para hoy ✨');
-
-  // Próximos pagos del mes en curso
-  const pays = sortPlanned(m.planned.filter(p => !p.paidExpenseId), realMonth).slice(0, 3);
-  $('#hubPaysCard').hidden = !pays.length;
-  $('#hubPays').innerHTML = pays.map(p => {
-    const c = catById(p.categoryId);
+  // Hoy: pagos atrasados o próximos (3 días), tareas de hoy o atrasadas y recordatorios de hoy
+  const items = [];
+  for (const p of m.planned.filter(x => !x.paidExpenseId)) {
     const st = dueStatus(p, realMonth);
-    return `<li>
+    if (st.rank > 3) continue;
+    const c = catById(p.categoryId);
+    items.push({ order: st.rank * 10, html: `<li>
       ${catIcon(c)}
       <div class="item-main" data-goto="finanzas" data-sub="presupuesto">
         <div class="item-title">${esc(p.name)}</div>
         <div class="item-sub"><span class="status ${st.cls}">${esc(st.text)}</span>${money(p.amount)}</div>
       </div>
       <button class="pay-btn" data-action="toggle-paid" data-id="${esc(p.id)}" data-month="${realMonth}">Pagar</button>
-    </li>`;
-  }).join('');
+    </li>` });
+  }
+  const todayTasks = state.tasks.filter(x => ['late', 'today'].includes(taskBucket(x)));
+  todayTasks.forEach(x => items.push({ order: taskBucket(x) === 'late' ? 5 : 20 + Number((x.time || '23:59').replace(':', '')) / 10000, html: taskItem(x) }));
+  state.reminders.filter(r => !r.done)
+    .map(r => ({ r, when: nextOccurrence(r) }))
+    .filter(x => dayDiff(x.when) === 0)
+    .forEach(x => items.push({ order: 20 + Number(x.r.time.replace(':', '')) / 10000, html: reminderItem(x.r) }));
+  items.sort((a, b) => a.order - b.order);
+  $('#hubToday').innerHTML = items.length ? items.map(x => x.html).join('') : emptyItem('Nada pendiente para hoy ✨ Disfruta tu día');
+  $('#hubTodayCount').textContent = items.length ? `${items.length} pendiente${items.length === 1 ? '' : 's'}` : '';
+
+  // En qué va tu mes: categorías con más gasto
+  const cats = spentByCategory(m).slice(0, 4);
+  const top = cats[0]?.spent || 1;
+  $('#hubMonthCard').hidden = !cats.length;
+  $('#hubCats').innerHTML = cats.map(({ c, spent }) => `<li>
+      <span class="hc-name">${esc(c.emoji)} ${esc(c.name)}</span>
+      <span class="hc-bar"><i style="width:${Math.max(4, (spent / top) * 100)}%;background:${esc(c.color)}"></i></span>
+      <span class="hc-val">${moneyShort(spent)}</span>
+    </li>`).join('');
+
+  // Accesos
+  const pendingTasks = state.tasks.filter(x => !x.done).length;
+  $('#scAgenda').textContent = pendingTasks ? `${pendingTasks} tarea${pendingTasks === 1 ? '' : 's'}` : 'Al día';
+  $('#scNotes').textContent = `${state.notes.length} nota${state.notes.length === 1 ? '' : 's'}`;
+  const v = state.vehicles[0];
+  const avg = v ? fuelStats(v.id).avg : null;
+  $('#scVeh').textContent = !v ? 'Agregar' : avg ? `${avg.toLocaleString('es-CO', { maximumFractionDigits: 0 })} km/gal` : `${state.vehicles.length} registrado${state.vehicles.length === 1 ? '' : 's'}`;
 
   const pinned = sortedNotes().filter(n => n.pinned).slice(0, 4);
   $('#hubNotesCard').hidden = !pinned.length;
@@ -1761,6 +1783,12 @@ function fabAction() {
 
 function quickAdd(kind) {
   if (kind === 'gasto') return expenseForm(null);
+  if (kind === 'ingreso') {
+    currentMonth = monthKey(new Date());
+    return incomeForm(null);
+  }
+  if (kind === 'tanqueo') return fuelForm(null);
+  if (kind === 'mover') return transferForm();
   if (kind === 'tarea') return taskForm(null);
   if (kind === 'recordatorio') return reminderForm(null);
   return noteForm(null);
@@ -2794,7 +2822,7 @@ goto('hub');
 if (!state.profile.onboarded) startOnboarding();
 else showLock();
 
-const APP_VERSION = '17';
+const APP_VERSION = '18';
 $('#appVersion').textContent = 'Versión ' + APP_VERSION;
 
 // Borra la caché y recarga para traer la última versión publicada.
