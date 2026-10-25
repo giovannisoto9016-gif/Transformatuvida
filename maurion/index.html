@@ -104,11 +104,6 @@
           <span class="tile-wide-text"><span class="tile-name">Vehículos</span><small>Tanqueos y consumo · SOAT · Tecnomecánica · Impuesto</small></span>
           <span class="muted">›</span>
         </button>
-        <button class="tile tile-wide" data-goto="futbol">
-          <span class="tile-ico">⚽</span>
-          <span class="tile-wide-text"><span class="tile-name">Fútbol</span><small>Últimos 10 partidos · goles · córners · remates · tarjetas</small></span>
-          <span class="muted">›</span>
-        </button>
       </div>
 
       <div class="card">
@@ -312,41 +307,6 @@
       </div>
     </section>
 
-    <!-- ============ FÚTBOL ============ -->
-    <section class="view" id="view-futbol">
-      <button class="back" data-goto="hub">‹ Inicio</button>
-      <h2 class="section-title">⚽ Análisis de partidos</h2>
-
-      <div class="card" id="fxKeyCard">
-        <h2>🔑 Conecta tu clave de API-Football</h2>
-        <p class="muted small">Se guarda solo en este celular (no va en las copias de seguridad). La encuentras en dashboard.api-football.com → tu cuenta → API Key.</p>
-        <div class="fx-key-row">
-          <input type="password" id="fxKeyInput" placeholder="Pega aquí tu API Key" autocomplete="off">
-          <button class="btn primary" data-action="fx-save-key">Guardar</button>
-        </div>
-      </div>
-
-      <div class="card" id="fxPicker">
-        <div class="fx-teams">
-          <div class="fx-slot" data-slot="home"></div>
-          <span class="fx-vs">vs</span>
-          <div class="fx-slot" data-slot="away"></div>
-        </div>
-        <div class="fx-search">
-          <input type="search" id="fxSearch" placeholder="🔍 Buscar equipo (mín. 3 letras)" autocomplete="off">
-          <button class="chip-btn" data-action="fx-search">Buscar</button>
-        </div>
-        <ul class="list fx-results" id="fxResults"></ul>
-        <div class="chips-scroll fx-recent" id="fxRecent"></div>
-        <label class="switch-row mt">🏟️ Local solo de local y visitante solo de visitante<input type="checkbox" id="fxSplit"></label>
-        <button class="btn primary full" data-action="fx-analyze" id="fxGo">Analizar últimos 10 partidos</button>
-        <div class="fx-progress" id="fxProgress" hidden><div class="bar"><div class="bar-fill" id="fxBar"></div></div><span class="muted small" id="fxMsg"></span></div>
-      </div>
-
-      <div id="fxOut"></div>
-      <p class="muted small fx-foot">Estadísticas de partidos ya jugados. No predicen resultados. Apuesta con responsabilidad y solo lo que puedas perder.</p>
-    </section>
-
     <!-- ============ NOTAS ============ -->
     <section class="view" id="view-notas">
       <input type="search" id="noteSearch" class="search" placeholder="🔍 Buscar en tus notas">
@@ -406,15 +366,6 @@
         <h2>Cuenta por defecto</h2>
         <p class="muted small">La que aparece seleccionada al registrar un gasto. Efectivo y tarjeta débito descuentan de esa cuenta; tarjeta crédito se suma a lo que debes en esa tarjeta.</p>
         <select id="defaultAccount" class="mt"></select>
-      </div>
-
-      <div class="card">
-        <h2>⚽ API-Football</h2>
-        <p class="muted small" id="fxKeyState">Sin clave.</p>
-        <div class="btn-col">
-          <button class="btn soft" data-action="fx-edit-key">Cambiar clave</button>
-          <button class="btn soft" data-action="fx-status">Ver consultas usadas hoy</button>
-        </div>
       </div>
 
       <div class="card">
